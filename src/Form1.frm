@@ -371,6 +371,8 @@ Private Sub pvShowResults(rs As Recordset)
     Dim vValue          As Variant
     Dim sKey            As String
     Dim cResult         As Collection
+    Dim lIter           As Long
+    Dim lSessIter       As Long
     
     On Error GoTo EH
     If rs Is Nothing Then
@@ -435,8 +437,7 @@ Private Sub pvShowResults(rs As Recordset)
         Set m_cStats = InitIndexCollection(m_rsStats, "Host", "Login", "DB")
     End If
     If Not rsSpids Is Nothing And m_rsList.RecordCount > 0 Then
-        m_rsList.MoveFirst
-        Do While Not m_rsList.EOF
+        Do While MoveRecordset(m_rsList, lIter)
             If m_rsList!IsActive.Value Or LCase$(C_Str(m_rsList!Status.Value)) <> "sleeping" Then
                 If Not SearchRecordset(rs, "session_id=" & m_rsList!SPID.Value) Then
                     m_oCmd.Parameters("show_sleeping_spids").Value = 2
@@ -445,14 +446,13 @@ Private Sub pvShowResults(rs As Recordset)
                     rsSess.CursorLocation = adUseClient
                     rsSess.Open m_oCmd, , adOpenStatic, adLockBatchOptimistic
                     If rsSess.RecordCount > 0 Then
-                        Do While Not rsSess.EOF
+                        Do While MoveRecordset(rsSess, lSessIter)
                             If SearchRecordset(m_rsList, "SPID=" & rsSess!session_id.Value) Then
                                 If pvCopyRow(rsSess, m_rsList) Then
                                     bRefreshData = True
                                 End If
                                 m_rsList!IsActive.Value = False
                             End If
-                            rsSess.MoveNext
                         Loop
                     Else
                         m_rsList.Delete
@@ -461,15 +461,12 @@ Private Sub pvShowResults(rs As Recordset)
             Else
                 m_rsList!IsActive.Value = False
             End If
-            If Not m_rsList.EOF Then
-                m_rsList.MoveNext
-            End If
         Loop
     End If
     Debug.Print "Before sync rs", Timer
     '--- sync rs
     Set m_cList = InitIndexCollection(m_rsList, "SPID")
-    Do While Not rs.EOF
+    Do While MoveRecordset(rs, lIter)
         If SearchCollection(rs.Fields, "session_id") Then
             If Not SetBookmark(m_rsList, m_cList, "#" & Trim$(C_Str(rs!session_id.Value))) Then
                 m_rsList.AddNew
@@ -553,21 +550,20 @@ Private Sub pvShowResults(rs As Recordset)
                 End If
             End If
         End If
-        rs.MoveNext
     Loop
     Debug.Print "Before m_rsList", Timer
     If m_rsList.RecordCount <> 0 Then
         If Not SearchCollection(rs.Fields, "session_id") Then
             Set cResult = InitIndexCollection(rs, "SPID")
         End If
-        m_rsList.MoveFirst
-        Do While Not m_rsList.EOF
+        lIter = 0
+        Do While MoveRecordset(m_rsList, lIter)
             sKey = C_Str(m_rsList!Host.Value) & "#" & C_Str(m_rsList!Login.Value) & "#" & C_Str(m_rsList!DB.Value)
             If Not SetBookmark(m_rsStats, m_cStats, sKey) Then
                 m_rsStats.AddNew Array("Host", "Login", "DB", "SPID", "Opers"), Array(C_Str(m_rsList!Host.Value), C_Str(m_rsList!Login.Value), C_Str(m_rsList!DB.Value), m_rsList!SPID.Value, 1)
                 m_cStats.Add m_rsStats.Bookmark, sKey
             End If
-            If (m_rsList!SPID.Value > 50 And LCase$(C_Str(m_rsList!Status.Value)) <> "background") Or m_bSystemProcesses Then
+            If (m_rsList!SPID.Value > 50 And LCase$(C_Str(m_rsList!Status.Value)) <> "background" And LCase$(C_Str(m_rsList!Command.Value)) <> "task manager") Or m_bSystemProcesses Then
                 If Not cResult Is Nothing Then
                     If Not SetBookmark(rs, cResult, "#" & C_Str(m_rsList!SPID.Value)) Then
                         m_rsList.Delete
@@ -598,7 +594,6 @@ Private Sub pvShowResults(rs As Recordset)
                 m_rsList.Delete
             End If
 LoopNext:
-            m_rsList.MoveNext
         Loop
     End If
     geCtl.Redraw = False
@@ -689,11 +684,13 @@ Private Sub Form_Resize()
     Dim dblLeft          As Double
     
     On Error Resume Next
-    geCtl.Move 0, 0, ScaleWidth * m_dblRatio, ScaleHeight
-    dblLeft = geCtl.Left + geCtl.Width
-    picSplitter.Move dblLeft, 0, 60, ScaleHeight
-    dblLeft = picSplitter.Left + picSplitter.Width
-    txtInput.Move dblLeft, 0, ScaleWidth - dblLeft, ScaleHeight
+    If WindowState <> vbMinimized Then
+        geCtl.Move 0, 0, ScaleWidth * m_dblRatio, ScaleHeight
+        dblLeft = geCtl.Left + geCtl.Width
+        picSplitter.Move dblLeft, 0, 60, ScaleHeight
+        dblLeft = picSplitter.Left + picSplitter.Width
+        txtInput.Move dblLeft, 0, ScaleWidth - dblLeft, ScaleHeight
+    End If
 End Sub
 
 Private Sub geCtl_ColumnHeaderClick(ByVal Column As GridEX20.JSColumn)
