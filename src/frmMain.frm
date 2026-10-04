@@ -123,13 +123,6 @@ Option Explicit
 Private Const MODULE_NAME As String = "frmMain"
 
 '=========================================================================
-' API
-'=========================================================================
-
-Private Const EM_SETSEL                 As Long = &HB1
-Private Const EM_SETTABSTOPS            As Long = &HCB
-
-'=========================================================================
 ' Constants and member variables
 '=========================================================================
 
@@ -669,13 +662,23 @@ Private Sub pvAddColumn( _
     lvwMain.AddColumn sCaption, lWidth, Align:=Align
 End Sub
 
+Private Sub pvTestConn()
+    On Error Resume Next
+    If m_oConn.State = adStateOpen Then
+        m_oConn.Execute "SELECT @@TRANCOUNT"
+        If Err.Number <> 0 Then
+            m_oConn.Close
+        End If
+    End If
+    If m_oConn.State = adStateClosed Then
+        m_oConn.Open m_oConn.ConnectionString, , m_sPassword
+        Set m_oCmd.ActiveConnection = m_oConn
+    End If
+End Sub
+
 '=========================================================================
 ' Control events
 '=========================================================================
-
-Private Sub Form_Initialize()
-    InitCommonControlsVB
-End Sub
 
 Private Sub Form_Resize()
     Dim dblLeft          As Double
@@ -1004,20 +1007,6 @@ Private Sub picSplitter_MouseUp(Button As Integer, Shift As Integer, X As Single
     m_bDown = False
 End Sub
 
-Private Sub pvTestConn()
-    On Error Resume Next
-    If m_oConn.State = adStateOpen Then
-        m_oConn.Execute "SELECT @@TRANCOUNT"
-        If Err.Number <> 0 Then
-            m_oConn.Close
-        End If
-    End If
-    If m_oConn.State = adStateClosed Then
-        m_oConn.Open m_oConn.ConnectionString, , m_sPassword
-        Set m_oCmd.ActiveConnection = m_oConn
-    End If
-End Sub
-
 Private Sub tmrFetch_Timer()
     Const FUNC_NAME     As String = "tmrFetch_Timer"
     Dim lState          As Long
@@ -1124,3 +1113,10 @@ Private Sub txtInput_KeyPress(KeyAscii As Integer)
     End If
 End Sub
 
+'=========================================================================
+' Base class events
+'=========================================================================
+
+Private Sub Form_Initialize()
+    InitCommonControlsVB
+End Sub

@@ -43,14 +43,6 @@ Event SelectionChanged()
 Event RightClick(ByVal Row As Long)
 
 '=========================================================================
-' API
-'=========================================================================
-
-'--- window classes
-Private Const STR_CLASS_LISTVIEW            As String = "SysListView32"
-Private Const STR_THEME_EXPLORER            As String = "Explorer"
-
-'=========================================================================
 ' Constants and member variables
 '=========================================================================
 

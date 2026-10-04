@@ -36,6 +36,9 @@ Public Const WM_VSCROLL                     As Long = &H115
 Public Const WM_LBUTTONDOWN                 As Long = &H201
 Public Const WM_RBUTTONDOWN                 As Long = &H204
 Public Const WM_MOUSEWHEEL                  As Long = &H20A
+'--- edit control messages
+Public Const EM_SETSEL                      As Long = &HB1
+Public Const EM_SETTABSTOPS                 As Long = &HCB
 '--- window styles
 Public Const WS_TABSTOP                     As Long = &H10000
 Public Const WS_VISIBLE                     As Long = &H10000000
@@ -101,35 +104,40 @@ Public Const LVN_KEYDOWN                    As Long = -155
 Public Const LVN_ODSTATECHANGED             As Long = -115
 Public Const LVN_COLUMNCLICK                As Long = -108
 Public Const LVN_ITEMCHANGED                As Long = -101
+Public Const NM_CUSTOMDRAW                  As Long = -12
 Public Const NM_RCLICK                      As Long = -5
 Public Const NM_DBLCLK                      As Long = -3
 Public Const NM_CLICK                       As Long = -2
-'--- for NM_CUSTOMDRAW, which is how a row is coloured or emboldened
-Public Const NM_CUSTOMDRAW                  As Long = -12
-Public Const CDRF_DODEFAULT                 As Long = &H0
+'--- for NMCUSTOMDRAW.dwDrawStage
 Public Const CDDS_PREPAINT                  As Long = &H1
-Public Const CDRF_NEWFONT                   As Long = &H2
-Public Const CDRF_NOTIFYITEMDRAW            As Long = &H20
 Public Const CDDS_ITEM                      As Long = &H10000
 Public Const CDDS_ITEMPREPAINT              As Long = CDDS_ITEM Or CDDS_PREPAINT
+'--- NM_CUSTOMDRAW return values
+Public Const CDRF_DODEFAULT                 As Long = &H0
+Public Const CDRF_NEWFONT                   As Long = &H2
+Public Const CDRF_NOTIFYITEMDRAW            As Long = &H20
 '--- for CreateFontIndirect
 Public Const FW_BOLD                        As Long = 700
 '--- for InitCommonControlsEx
-Private Const ICC_LISTVIEW_CLASSES                      As Long = &H1
-Private Const ICC_USEREX_CLASSES                        As Long = &H200
+Public Const ICC_LISTVIEW_CLASSES           As Long = &H1
+Public Const ICC_USEREX_CLASSES             As Long = &H200
 '--- hresults
-Private Const S_OK                                      As Long = 0
+Public Const S_OK                           As Long = 0
 '--- for invoke
-Private Const LOCALE_USER_DEFAULT                       As Long = &H400
+Public Const LOCALE_USER_DEFAULT            As Long = &H400
 '--- for VariantChangeType
-Private Const VARIANT_ALPHABOOL                         As Long = 2
+Public Const VARIANT_ALPHABOOL              As Long = 2
+'--- window classes
+Public Const STR_CLASS_LISTVIEW             As String = "SysListView32"
+'--- for SetWindowTheme
+Public Const STR_THEME_EXPLORER             As String = "Explorer"
 
-Private Declare Function InitCommonControlsEx Lib "comctl32.dll" (iccex As tagInitCommonControlsEx) As Boolean
-Private Declare Function LoadLibrary Lib "kernel32" Alias "LoadLibraryA" (ByVal lpLibFileName As String) As Long
-Private Declare Function GetAsyncKeyState Lib "user32" (ByVal vKey As Long) As Integer
-Private Declare Function VariantChangeType Lib "oleaut32" (Dest As Variant, Src As Variant, ByVal wFlags As Integer, ByVal vt As VbVarType) As Long
-Private Declare Function SysReAllocString Lib "oleaut32" (ByVal pBSTR As LongPtr, ByVal lpsz As LongPtr) As Long
-Private Declare Function OleTranslateColor Lib "oleaut32" (ByVal clr As Long, ByVal hPal As LongPtr, lColorRef As Long) As Long
+Public Declare Function InitCommonControlsEx Lib "comctl32" (iccex As tagInitCommonControlsEx) As Boolean
+Public Declare Function LoadLibrary Lib "kernel32" Alias "LoadLibraryW" (ByVal lpLibFileName As LongPtr) As LongPtr
+Public Declare Function GetAsyncKeyState Lib "user32" (ByVal vKey As Long) As Integer
+Public Declare Function VariantChangeType Lib "oleaut32" (Dest As Variant, Src As Variant, ByVal wFlags As Integer, ByVal vt As VbVarType) As Long
+Public Declare Function SysReAllocString Lib "oleaut32" (ByVal pBSTR As LongPtr, ByVal lpsz As LongPtr) As Long
+Public Declare Function OleTranslateColor Lib "oleaut32" (ByVal clr As Long, ByVal hPal As LongPtr, lColorRef As Long) As Long
 Public Declare Function SendMessage Lib "user32" Alias "SendMessageW" (ByVal hWnd As LongPtr, ByVal wMsg As Long, ByVal wParam As LongPtr, lParam As Any) As LongPtr
 Public Declare Function GetClientRect Lib "user32" (ByVal hWnd As LongPtr, lpRect As RECT) As Long
 Public Declare Function GetObjectAPI Lib "gdi32" Alias "GetObjectW" (ByVal hObject As LongPtr, ByVal nCount As Long, lpObject As Any) As Long
@@ -143,8 +151,9 @@ Public Declare Function DestroyWindow Lib "user32" (ByVal hWnd As LongPtr) As Lo
 Public Declare Function MoveWindow Lib "user32" (ByVal hWnd As LongPtr, ByVal X As Long, ByVal Y As Long, ByVal nWidth As Long, ByVal nHeight As Long, ByVal bRepaint As Long) As Long
 Public Declare Function SetFocusAPI Lib "user32" Alias "SetFocus" (ByVal hWnd As LongPtr) As LongPtr
 Public Declare Function GetKeyState Lib "user32" (ByVal nVirtKey As Long) As Integer
+Public Declare Function UpdateWindow Lib "user32" (ByVal hWnd As LongPtr) As Long
 
-Private Type tagInitCommonControlsEx
+Public Type tagInitCommonControlsEx
    lngSize              As Long
    lngICC               As Long
 End Type
@@ -310,6 +319,14 @@ Public Sub PopPrintError(vErr As Variant, sModule As String, sFunction As String
 End Sub
 
 '=========================================================================
+' Properties
+'=========================================================================
+
+Public Property Get InIde() As Boolean
+    Debug.Assert pvSetTrue(InIde)
+End Property
+
+'=========================================================================
 ' Functions
 '=========================================================================
 
@@ -354,7 +371,6 @@ Public Function CreateRecordsetArray(FldDesc As Variant) As Recordset
 EH:
     PrintError FUNC_NAME
 End Function
-
 
 Public Function SearchRecordset( _
             rs As Recordset, _
@@ -450,7 +466,7 @@ Public Function InitCommonControlsVB() As Boolean
    Dim iccex            As tagInitCommonControlsEx
    
    On Error Resume Next
-   Call LoadLibrary("shell32.dll")
+   Call LoadLibrary(StrPtr("shell32.dll"))
    With iccex
        .lngSize = LenB(iccex)
        .lngICC = ICC_LISTVIEW_CLASSES Or ICC_USEREX_CLASSES
@@ -766,15 +782,6 @@ Public Function RemoveCollection(pVbCol As IVbCollection, Index As Variant) As B
     End If
 End Function
 
-Public Property Get InIde() As Boolean
-    Debug.Assert pvSetTrue(InIde)
-End Property
-
-Private Function pvSetTrue(bValue As Boolean) As Boolean
-    bValue = True
-    pvSetTrue = True
-End Function
-
 Public Function DispInvoke( _
             ByVal pDisp As IVbDispatch, _
             Name As Variant, _
@@ -870,4 +877,9 @@ QH:
     If VarType(RetVal) = vbVariant Then
         RetVal = Array(hResult, uInfo.sCode, uInfo.Description, uInfo.Source)
     End If
+End Function
+
+Private Function pvSetTrue(bValue As Boolean) As Boolean
+    bValue = True
+    pvSetTrue = True
 End Function

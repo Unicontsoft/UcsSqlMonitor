@@ -159,8 +159,6 @@ Attribute VB_Exposed = False
 Option Explicit
 Private Const MODULE_NAME As String = "frmConnect"
 
-Private Declare Function UpdateWindow Lib "user32" (ByVal hWnd As Long) As Long
-
 '=========================================================================
 ' Constants and member variables
 '=========================================================================
@@ -425,4 +423,3 @@ End Sub
 Private Sub Command2_Click()
     Visible = False
 End Sub
-
