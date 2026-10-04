@@ -6,7 +6,7 @@ Begin VB.Form frmStats
    ClientTop       =   408
    ClientWidth     =   7896
    Icon            =   "frmStats.frx":0000
-   LinkTopic       =   "Form1"
+   LinkTopic       =   "frmStats"
    ScaleHeight     =   7980
    ScaleWidth      =   7896
    StartUpPosition =   3  'Windows Default

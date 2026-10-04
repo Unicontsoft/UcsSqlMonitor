@@ -6,8 +6,8 @@ Begin VB.Form frmConnect
    ClientLeft      =   36
    ClientTop       =   336
    ClientWidth     =   4548
-   Icon            =   "Form2.frx":0000
-   LinkTopic       =   "Form2"
+   Icon            =   "frmConnect.frx":0000
+   LinkTopic       =   "frmConnect"
    MaxButton       =   0   'False
    MinButton       =   0   'False
    ScaleHeight     =   4272
