@@ -29,6 +29,7 @@ Public Const WM_SETREDRAW                   As Long = &HB
 Public Const WM_SETFONT                     As Long = &H30
 Public Const WM_GETFONT                     As Long = &H31
 Public Const WM_NOTIFY                      As Long = &H4E
+Public Const WM_NOTIFYFORMAT                As Long = &H55
 Public Const WM_KEYDOWN                     As Long = &H100
 Public Const WM_HSCROLL                     As Long = &H114
 Public Const WM_VSCROLL                     As Long = &H115

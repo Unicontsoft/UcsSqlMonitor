@@ -419,9 +419,17 @@ Public Function SubclassProc( _
             Handled As Boolean) As Long
     #If lWParam Then '--- touch args
     #End If
+    Const NF_QUERY      As Long = 3
+    Const NFR_UNICODE   As Long = 2
     Dim lRetVal         As Long
 
     Select Case lMsg
+    Case WM_NOTIFYFORMAT
+        '--- VB6 host is an ANSI window, so claim Unicode for the list's notifications
+        If hWnd <> m_hList And lParam = NF_QUERY Then
+            SubclassProc = NFR_UNICODE
+            Handled = True
+        End If
     Case WM_NOTIFY
         If pvCustomDraw(lParam, lRetVal) Then
             SubclassProc = lRetVal
@@ -661,10 +669,11 @@ Private Sub pvInit()
         Exit Sub
     End If
     InitIPAO m_uIPAO, Me
-    pvCreateList
-    pvApplyFont
+    '--- host hook goes first so it answers WM_NOTIFYFORMAT while the list is created
     Set m_pHostHook = InitSubclassingThunk(UserControl.hWnd, Me, _
         pvAddressOfSubclassProc.SubclassProc(0, 0, 0, 0, 0))
+    pvCreateList
+    pvApplyFont
     Set m_pListHook = InitSubclassingThunk(m_hList, Me, _
         pvAddressOfSubclassProc.SubclassProc(0, 0, 0, 0, 0))
 End Sub
