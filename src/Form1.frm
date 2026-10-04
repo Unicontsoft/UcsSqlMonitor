@@ -1,5 +1,4 @@
 VERSION 5.00
-Object = "{E684D8A3-716C-4E59-AA94-7144C04B0074}#1.1#0"; "GridEX20.ocx"
 Begin VB.Form frmMain 
    Caption         =   "Ucs DB Monitor"
    ClientHeight    =   5988
@@ -23,7 +22,7 @@ Begin VB.Form frmMain
       Top             =   924
       Width           =   96
    End
-   Begin GridEX20.GridEX geCtl 
+   Begin UcsSQLMonitor.ctxListView lvwMain 
       Height          =   4632
       Left            =   336
       TabIndex        =   0
@@ -31,59 +30,20 @@ Begin VB.Form frmMain
       Width           =   4212
       _ExtentX        =   7430
       _ExtentY        =   8170
-      Version         =   "2.0"
-      RecordNavigator =   -1  'True
-      HoldSortSettings=   -1  'True
-      BoundColumnIndex=   ""
-      ReplaceColumnIndex=   ""
-      GridLineStyle   =   2
+      BeginProperty Font {0BE35203-8F91-11CE-9DE3-00AA004BB851} 
+         Name            =   "Tahoma"
+         Size            =   7.8
+         Charset         =   204
+         Weight          =   400
+         Underline       =   0   'False
+         Italic          =   0   'False
+         Strikethrough   =   0   'False
+      EndProperty
       MultiSelect     =   -1  'True
-      HideSelection   =   2
-      HeaderStyle     =   3
-      MethodHoldFields=   -1  'True
-      ContScroll      =   -1  'True
-      AllowEdit       =   0   'False
-      BorderStyle     =   2
-      GroupByBoxVisible=   0   'False
-      MaskColor       =   16711935
-      ImageCount      =   1
-      ImagePicture1   =   "Form1.frx":0442
-      RowHeaders      =   -1  'True
-      ItemCount       =   0
-      DataMode        =   99
-      HeaderFontName  =   "Tahoma"
-      FontName        =   "Tahoma"
-      ColumnHeaderHeight=   264
-      FrozenColumns   =   1
-      IntProp1        =   0
-      IntProp2        =   0
-      IntProp7        =   0
-      ColumnsCount    =   14
-      Column(1)       =   "Form1.frx":075C
-      Column(2)       =   "Form1.frx":08B4
-      Column(3)       =   "Form1.frx":09A0
-      Column(4)       =   "Form1.frx":0A8C
-      Column(5)       =   "Form1.frx":0B70
-      Column(6)       =   "Form1.frx":0C64
-      Column(7)       =   "Form1.frx":0D58
-      Column(8)       =   "Form1.frx":0E4C
-      Column(9)       =   "Form1.frx":0F78
-      Column(10)      =   "Form1.frx":1064
-      Column(11)      =   "Form1.frx":11C0
-      Column(12)      =   "Form1.frx":1314
-      Column(13)      =   "Form1.frx":1468
-      Column(14)      =   "Form1.frx":1568
-      FormatStylesCount=   6
-      FormatStyle(1)  =   "Form1.frx":1700
-      FormatStyle(2)  =   "Form1.frx":17E0
-      FormatStyle(3)  =   "Form1.frx":192C
-      FormatStyle(4)  =   "Form1.frx":19DC
-      FormatStyle(5)  =   "Form1.frx":1A90
-      FormatStyle(6)  =   "Form1.frx":1B68
-      ImageCount      =   1
-      ImagePicture(1) =   "Form1.frx":1C20
-      PrinterProperties=   "Form1.frx":1F3A
+      OwnerData       =   -1  'True
+      SortHeaders     =   -1  'True
    End
+
    Begin VB.Timer tmrFetch 
       Enabled         =   0   'False
       Interval        =   200
@@ -163,20 +123,18 @@ Option Explicit
 Private Const MODULE_NAME As String = "frmMain"
 
 '=========================================================================
-' Constants and member variables
+' API
 '=========================================================================
 
-Private Const EM_SETTABSTOPS            As Long = &HCB
 Private Const EM_SETSEL                 As Long = &HB1
-
-Private Declare Function SendMessage Lib "user32" Alias "SendMessageA" (ByVal hWnd As Long, ByVal wMsg As Long, ByVal wParam As Long, lParam As Any) As Long
+Private Const EM_SETTABSTOPS            As Long = &HCB
 
 '=========================================================================
 ' Constants and member variables
 '=========================================================================
 
 Private Const STR_REG_COMMON        As String = "Common"
-Private Const FMT_ACTIVE            As String = "Active"
+Private Const CLR_ACTIVE            As Long = &H80FF00
 Private Const ERR_NO_MORE_RESULTS   As Long = &H40EC9
 Private Const MSG_CONTINUE          As String = "Do you want to continue?"
 
@@ -204,6 +162,12 @@ Private m_cSelected         As Collection
 Private m_bInSet            As Boolean
 Private m_bDelayFetch       As Boolean
 Private m_sPassword         As String
+Private m_aColumns()        As UcsColumnInfo
+
+Private Type UcsColumnInfo
+    Field                   As String
+    NumberFormat            As String
+End Type
 
 Private Enum UcsMenuIndexes
     ucsMnuFileConnect = 0
@@ -213,23 +177,6 @@ Private Enum UcsMenuIndexes
     ucsMnuHelpAbout = 0
     ucsMnuMainPopup = 2
     ucsMnuPopupKill = 0
-End Enum
-
-Private Enum ColIdx
-    c_SPID = 1
-    c_Login
-    c_Host
-    c_DB
-    c_Program
-    c_Status
-    c_Command
-    c_Blk
-    c_Wait
-    c_Trans
-    c_CPU
-    c_Dsk
-    c_LastBatch
-    c_IsActive
 End Enum
 
 '=========================================================================
@@ -247,17 +194,21 @@ End Sub
 
 Private Property Get pvSelectedSpids() As Collection
     Const FUNC_NAME     As String = "pvSelectedSpids [get]"
+    Dim lRow            As Long
     Dim lIdx            As Long
-    
+
     On Error GoTo EH
     Set pvSelectedSpids = New Collection
-    If geCtl.Row > 0 Then
-        pvSelectedSpids.Add geCtl.Value(c_SPID)
+    lRow = lvwMain.FocusedRow
+    If lRow > 0 Then
+        If pvMoveToRow(lRow) Then
+            pvSelectedSpids.Add m_rsListSort!SPID.Value
+        End If
     End If
-    If geCtl.SelectedItems.Count > 0 Then
-        For lIdx = 1 To geCtl.RowCount
-            If geCtl.RowSelected(lIdx) Then
-                If SetAbsolutePosition(m_rsListSort, lIdx) Then
+    If lvwMain.SelectedCount > 0 Then
+        For lIdx = 1 To lvwMain.ItemCount
+            If lvwMain.ItemSelected(lIdx) Then
+                If pvMoveToRow(lIdx) Then
                     pvSelectedSpids.Add m_rsListSort!SPID.Value, "#" & m_rsListSort!SPID.Value
                 End If
             End If
@@ -271,40 +222,28 @@ End Property
 
 Private Property Set pvSelectedSpids(oValue As Collection)
     Const FUNC_NAME     As String = "pvSelectedSpids [let]"
+    Dim lFocus          As Long
     Dim lIdx            As Long
-    Dim lFirst          As Long
-    
+    Dim bSelected       As Boolean
+
     On Error GoTo EH
     If oValue.Count > 0 Then
         m_bInSet = True
         If SearchRecordset(m_rsListSort, "SPID=" & oValue(1)) Then
-            lIdx = m_rsListSort.AbsolutePosition
-        Else
-            lIdx = -1
+            lFocus = m_rsListSort.AbsolutePosition
         End If
-        If geCtl.Row <> lIdx Then
-            lFirst = geCtl.FirstItem
-            geCtl.Row = lIdx
-            geCtl.FirstItem = lFirst
-        End If
-        lIdx = 2
-        Do While lIdx <= oValue.Count
-            If SearchRecordset(m_rsListSort, "SPID=" & oValue(lIdx)) Then
-                geCtl.SelectedItems.Add m_rsListSort.AbsolutePosition
-                lIdx = lIdx + 1
-            Else
-                oValue.Remove lIdx
+        For lIdx = 1 To lvwMain.ItemCount
+            bSelected = False
+            If pvMoveToRow(lIdx) Then
+                bSelected = SearchCollection(oValue, "#" & m_rsListSort!SPID.Value)
             End If
-        Loop
-        For lIdx = 1 To geCtl.RowCount
-            If geCtl.RowSelected(lIdx) Then
-                If Not SetAbsolutePosition(m_rsListSort, lIdx) Then
-                    geCtl.RowSelected(lIdx) = False
-                ElseIf Not SearchCollection(oValue, "#" & m_rsListSort!SPID.Value) Then
-                    geCtl.RowSelected(lIdx) = False
-                End If
+            If lvwMain.ItemSelected(lIdx) <> bSelected Then
+                lvwMain.ItemSelected(lIdx) = bSelected
             End If
         Next
+        If lvwMain.FocusedRow <> lFocus Then
+            lvwMain.FocusedRow = lFocus
+        End If
         m_bInSet = False
     End If
     Exit Property
@@ -319,19 +258,31 @@ End Property
 
 Private Sub pvRefreshUI()
     Const FUNC_NAME     As String = "pvRefreshUI"
-    Dim sInputBuffer    As String
-    Dim lIdx            As Long
-    
+
     On Error GoTo EH
     If m_rsListSort Is Nothing Then
         Exit Sub
     End If
-    geCtl.Refresh
-    For lIdx = 1 To geCtl.RowCount
-        geCtl.RefreshRowIndex lIdx
-    Next
-    If geCtl.Row > 0 Then
-        If SetAbsolutePosition(m_rsListSort, geCtl.Row) Then
+    lvwMain.Refresh
+    pvRefreshInput
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
+End Sub
+
+Private Sub pvRefreshInput()
+    Const FUNC_NAME     As String = "pvRefreshInput"
+    Dim lRow            As Long
+    Dim sInputBuffer    As String
+
+    On Error GoTo EH
+    If m_rsListSort Is Nothing Then
+        Exit Sub
+    End If
+    lRow = lvwMain.FocusedRow
+    If lRow > 0 Then
+        If pvMoveToRow(lRow) Then
             If SearchCollection(m_rsListSort.Fields, "Input_Buffer2") And Not m_rsListSort.EOF Then
                 sInputBuffer = C_Str(m_rsListSort!Input_Buffer2.Value)
                 If txtInput.Text <> sInputBuffer Then
@@ -596,10 +547,10 @@ Private Sub pvShowResults(rs As Recordset)
 LoopNext:
         Loop
     End If
-    geCtl.Redraw = False
-    If geCtl.ItemCount <> m_rsListSort.RecordCount Then
+    lvwMain.Redraw = False
+    If lvwMain.ItemCount <> m_rsListSort.RecordCount Then
         m_bInSet = True
-        geCtl.ItemCount = m_rsListSort.RecordCount
+        lvwMain.ItemCount = m_rsListSort.RecordCount
         m_bInSet = False
         bRefreshData = True
     End If
@@ -607,7 +558,7 @@ LoopNext:
         Set pvSelectedSpids = m_cSelected
         pvRefreshUI
     End If
-    geCtl.Redraw = True
+    lvwMain.Redraw = True
     If bRefreshStats And Not m_oFrmStats Is Nothing Then
         m_oFrmStats.frRefresh m_rsStats
     End If
@@ -672,6 +623,52 @@ Private Sub pvSetCaption(oForm As VB.Form)
     oForm.Caption = IIf(LenB(m_sFilter) <> 0, m_sFilter & " - ", vbNullString) & STR_APP_NAME & " - [" & m_sServer & "]"
 End Sub
 
+'--- positions m_rsListSort on a list row, a no-op when already there as cells of one row repaint together
+Private Function pvMoveToRow(ByVal lRow As Long) As Boolean
+    If m_rsListSort Is Nothing Then
+        Exit Function
+    End If
+    If lRow < 1 Or lRow > m_rsListSort.RecordCount Then
+        Exit Function
+    End If
+    If m_rsListSort.AbsolutePosition = lRow Then
+        pvMoveToRow = True
+    Else
+        pvMoveToRow = SetAbsolutePosition(m_rsListSort, lRow)
+    End If
+End Function
+
+Private Sub pvInitColumns()
+    pvAddColumn "SPID", "SPID", 40, NumberFormat:="#,##0"
+    pvAddColumn "Login", "Login", 167
+    pvAddColumn "Host", "Host", 83
+    pvAddColumn "DB", "DB", 208
+    pvAddColumn "Program", "Program", 417
+    pvAddColumn "Status", "Status", 83
+    pvAddColumn "Command", "Command", 83
+    pvAddColumn "Blk", "Blk", 33, NumberFormat:="#,##0"
+    pvAddColumn "Wait", "Wait", 125
+    pvAddColumn "Trans", "Trans", 33, Align:=LVCFMT_CENTER, NumberFormat:="#,##0"
+    pvAddColumn "CPU", "CPU", 62, Align:=LVCFMT_RIGHT, NumberFormat:="#,##0"
+    pvAddColumn "Dsk", "Dsk", 62, Align:=LVCFMT_RIGHT, NumberFormat:="#,##0"
+    pvAddColumn "Last_Batch", "LastBatch", 117
+End Sub
+
+Private Sub pvAddColumn( _
+            sField As String, _
+            sCaption As String, _
+            ByVal lWidth As Long, _
+            Optional ByVal Align As Long = LVCFMT_LEFT, _
+            Optional NumberFormat As String)
+    Dim lCount          As Long
+
+    lCount = lvwMain.ColumnCount
+    ReDim Preserve m_aColumns(0 To lCount) As UcsColumnInfo
+    m_aColumns(lCount).Field = sField
+    m_aColumns(lCount).NumberFormat = NumberFormat
+    lvwMain.AddColumn sCaption, lWidth, Align:=Align
+End Sub
+
 '=========================================================================
 ' Control events
 '=========================================================================
@@ -682,35 +679,40 @@ End Sub
 
 Private Sub Form_Resize()
     Dim dblLeft          As Double
-    
+
     On Error Resume Next
     If WindowState <> vbMinimized Then
-        geCtl.Move 0, 0, ScaleWidth * m_dblRatio, ScaleHeight
-        dblLeft = geCtl.Left + geCtl.Width
+        lvwMain.Move 0, 0, ScaleWidth * m_dblRatio, ScaleHeight
+        dblLeft = lvwMain.Left + lvwMain.Width
         picSplitter.Move dblLeft, 0, 60, ScaleHeight
         dblLeft = picSplitter.Left + picSplitter.Width
         txtInput.Move dblLeft, 0, ScaleWidth - dblLeft, ScaleHeight
     End If
 End Sub
 
-Private Sub geCtl_ColumnHeaderClick(ByVal Column As GridEX20.JSColumn)
-    Const FUNC_NAME     As String = "geCtl_ColumnHeaderClick"
+Private Sub lvwMain_ColumnClick(ByVal Col As Long)
+    Const FUNC_NAME     As String = "lvwMain_ColumnClick"
+    Dim sKey            As String
     Dim sPrev           As String
     Dim sDesc           As String
-    
+
     On Error GoTo EH
-    If InStr(m_rsListSort.Sort, Column.Key & ",") Then
+    If m_rsListSort Is Nothing Then
+        Exit Sub
+    End If
+    sKey = m_aColumns(Col - 1).Field
+    If InStr(m_rsListSort.Sort, sKey & ",") Then
         sDesc = " DESC"
     End If
     If (GetShiftState() And vbCtrlMask) <> 0 Then
-        sPrev = Replace(Replace(Replace(m_rsListSort.Sort, Column.Key & " DESC, ", vbNullString), Column.Key & ", ", vbNullString), ", SPID", vbNullString)
+        sPrev = Replace(Replace(Replace(m_rsListSort.Sort, sKey & " DESC, ", vbNullString), sKey & ", ", vbNullString), ", SPID", vbNullString)
         If sPrev = "SPID" Then
             sPrev = vbNullString
         Else
             sPrev = sPrev & ", "
         End If
     End If
-    m_rsListSort.Sort = sPrev & Column.Key & sDesc & ", SPID"
+    m_rsListSort.Sort = sPrev & sKey & sDesc & ", SPID"
     pvRefreshUI
     Exit Sub
 EH:
@@ -718,24 +720,36 @@ EH:
     Resume Next
 End Sub
 
-Private Sub geCtl_FetchIcon(ByVal RowIndex As Long, ByVal ColIndex As Integer, ByVal RowBookmark As Variant, ByVal IconIndex As GridEX20.JSRetInteger)
-    Const FUNC_NAME     As String = "geCtl_FetchIcon"
-    
+Private Sub lvwMain_GetItemText(ByVal Row As Long, ByVal Col As Long, Text As String)
+    Const FUNC_NAME     As String = "lvwMain_GetItemText"
+    Dim vValue          As Variant
+
     On Error GoTo EH
-    If m_rsListSort Is Nothing Then
+    If Not pvMoveToRow(Row) Then
         Exit Sub
     End If
-    If RowIndex > 0 And RowIndex <= m_rsListSort.RecordCount Then
-        If SetAbsolutePosition(m_rsListSort, RowIndex) Then
-            If SearchCollection(m_rsListSort.Fields, "open_tran_count") Then
-                If m_rsListSort!Status.Value <> "sleeping" Or m_rsListSort!open_tran_count.Value > 0 Then
-                    IconIndex = 1
-                End If
-            Else
-                If m_rsListSort!IsActive.Value Then
-                    IconIndex = 1
-                End If
-            End If
+    With m_aColumns(Col - 1)
+        vValue = m_rsListSort.Fields(.Field).Value
+        If LenB(.NumberFormat) <> 0 And Not IsNull(vValue) Then
+            Text = Format$(vValue, .NumberFormat)
+        Else
+            Text = C_Str(vValue)
+        End If
+    End With
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
+End Sub
+
+Private Sub lvwMain_ItemPrePaint(ByVal Row As Long, Color As OLE_COLOR, BackColor As OLE_COLOR, Bold As Boolean, Handled As Boolean)
+    Const FUNC_NAME     As String = "lvwMain_ItemPrePaint"
+
+    On Error GoTo EH
+    If pvMoveToRow(Row) Then
+        If C_Bool(m_rsListSort!IsActive.Value) Then
+            BackColor = CLR_ACTIVE
+            Handled = True
         End If
     End If
     Exit Sub
@@ -744,19 +758,14 @@ EH:
     Resume Next
 End Sub
 
-Private Sub geCtl_KeyDown(KeyCode As Integer, Shift As Integer)
-    Const FUNC_NAME     As String = "geCtl_KeyDown"
-    Dim lIdx            As Long
-    
+Private Sub lvwMain_KeyDown(KeyCode As Integer, Shift As Integer)
+    Const FUNC_NAME     As String = "lvwMain_KeyDown"
+
     On Error GoTo EH
     If Shift = vbCtrlMask And KeyCode = vbKeyC Then
-'        ClipCopy geCtl
-        Clipboard.Clear
-        Clipboard.SetText Replace(geCtl.GetClipString(True), vbCr, vbCrLf)
+        ClipCopy lvwMain, SelectedOnly:=True
     ElseIf Shift = vbCtrlMask And KeyCode = vbKeyA Then
-        For lIdx = 1 To geCtl.RowCount
-            geCtl.RowSelected(lIdx) = True
-        Next
+        lvwMain.SelectAll
     End If
     Exit Sub
 EH:
@@ -764,22 +773,14 @@ EH:
     Resume Next
 End Sub
 
-Private Sub geCtl_MouseUp(Button As Integer, Shift As Integer, X As Single, Y As Single)
-    Const FUNC_NAME     As String = "geCtl_MouseUp"
-    Dim lRow            As Long
-    
+Private Sub lvwMain_RightClick(ByVal Row As Long)
+    Const FUNC_NAME     As String = "lvwMain_RightClick"
+
     On Error GoTo EH
-    If Button = vbRightButton Then
-        lRow = geCtl.RowFromPoint(X, Y)
-        If lRow > 0 Then
-            With geCtl.GetRowData(lRow)
-                If .RowType = jgexRowTypeRecord Then
-                    If C_Lng(.Value(c_SPID)) <> 0 Then
-                        m_dblCurrentSPID = C_Lng(.Value(c_SPID))
-                        PopupMenu mnuMain(ucsMnuMainPopup)
-                    End If
-                End If
-            End With
+    If pvMoveToRow(Row) Then
+        If C_Lng(m_rsListSort!SPID.Value) <> 0 Then
+            m_dblCurrentSPID = C_Lng(m_rsListSort!SPID.Value)
+            PopupMenu mnuMain(ucsMnuMainPopup)
         End If
     End If
     Exit Sub
@@ -788,81 +789,13 @@ EH:
     Resume Next
 End Sub
 
-Private Sub geCtl_RowColChange(ByVal LastRow As Long, ByVal LastCol As Integer)
-    Const FUNC_NAME     As String = "geCtl_RowColChange"
-    
-    On Error GoTo EH
-    pvRefreshUI
-    If Not m_bInSet Then
-        Set m_cSelected = pvSelectedSpids
-    End If
-    Exit Sub
-EH:
-    PrintError FUNC_NAME
-    Resume Next
-End Sub
+Private Sub lvwMain_SelectionChanged()
+    Const FUNC_NAME     As String = "lvwMain_SelectionChanged"
 
-Private Sub geCtl_RowFormat(RowBuffer As GridEX20.JSRowData)
-    Const FUNC_NAME     As String = "geCtl_RowFormat"
-    
-    On Error GoTo EH
-    If RowBuffer.ColCount > 0 Then
-        If C_Bool(RowBuffer.Value(c_IsActive)) Then
-            RowBuffer.RowStyle = FMT_ACTIVE
-        End If
-    End If
-    Exit Sub
-EH:
-    PrintError FUNC_NAME
-    Resume Next
-End Sub
-
-Private Sub geCtl_SelectionChange()
-    Const FUNC_NAME     As String = "geCtl_SelectionChange"
-    
     On Error GoTo EH
     If Not m_bInSet Then
+        pvRefreshInput
         Set m_cSelected = pvSelectedSpids
-    End If
-    Exit Sub
-EH:
-    PrintError FUNC_NAME
-    Resume Next
-End Sub
-
-Private Sub geCtl_UnboundReadData(ByVal RowIndex As Long, ByVal Bookmark As Variant, ByVal Values As GridEX20.JSRowData)
-    Const FUNC_NAME     As String = "geCtl_UnboundReadData"
-    Dim lIdx            As Long
-    
-    On Error GoTo EH
-    If m_rsListSort Is Nothing Then
-        Exit Sub
-    End If
-    If RowIndex > 0 And RowIndex <= m_rsListSort.RecordCount Then
-        If SetAbsolutePosition(m_rsListSort, RowIndex) Then
-            If SearchCollection(m_rsListSort.Fields, "session_id") Then
-                For lIdx = 1 To geCtl.Columns.Count
-                    Values(lIdx) = m_rsListSort.Fields(lIdx - 1).Value
-                Next
-            Else
-                With m_rsListSort
-                    Values(c_SPID) = !SPID.Value
-                    Values(c_Login) = !Login.Value
-                    Values(c_Host) = !Host.Value
-                    Values(c_DB) = !DB.Value
-                    Values(c_Program) = !Program.Value
-                    Values(c_Status) = !Status.Value
-                    Values(c_Command) = !Command.Value
-                    Values(c_Blk) = !Blk.Value
-                    Values(c_Wait) = !Wait.Value
-                    Values(c_Trans) = !Trans.Value
-                    Values(c_CPU) = !CPU.Value
-                    Values(c_Dsk) = !Dsk.Value
-                    Values(c_LastBatch) = !Last_Batch.Value
-                    Values(c_IsActive) = !IsActive.Value
-                End With
-            End If
-        End If
     End If
     Exit Sub
 EH:
@@ -971,7 +904,7 @@ Private Sub mnuFile_Click(Index As Integer)
         Else
             Caption = STR_APP_NAME
         End If
-        geCtl.ItemCount = 0
+        lvwMain.ItemCount = 0
     Case ucsMnuFileFilter
         sFilter = InputBox("Program Filter (use * for wildcards)", "Filter", m_sFilter)
         If StrPtr(sFilter) <> 0 Then
@@ -983,7 +916,7 @@ Private Sub mnuFile_Click(Index As Integer)
             pvSetCaption Me
             If Not m_rsListSort Is Nothing Then
                 m_rsListSort.Filter = pvGetFilter
-                geCtl.ItemCount = m_rsListSort.RecordCount
+                lvwMain.ItemCount = m_rsListSort.RecordCount
                 pvRefreshUI
             End If
         End If
@@ -1027,14 +960,14 @@ Private Sub mnuPopup_Click(Index As Integer)
     On Error GoTo EH
     Select Case Index
     Case ucsMnuPopupKill
-        For lIdx = 1 To geCtl.RowCount
-            If geCtl.RowSelected(lIdx) Then
-                If SetAbsolutePosition(m_rsListSort, lIdx) Then
+        For lIdx = 1 To lvwMain.ItemCount
+            If lvwMain.ItemSelected(lIdx) Then
+                If pvMoveToRow(lIdx) Then
                     m_oConn.Execute "KILL " & m_rsListSort!SPID.Value
                 End If
             End If
         Next
-        geCtl.Row = -1
+        lvwMain.SelectedRow = 0
     End Select
     Exit Sub
 EH:
@@ -1138,12 +1071,7 @@ Private Sub Form_Load()
     WindowState = GetSetting(STR_APP_NAME, STR_REG_COMMON, "WindowState", vbNormal)
     m_sFilter = GetSetting(STR_APP_NAME, STR_REG_COMMON, "Filter", vbNullString)
     m_dblRatio = Limit(C_Dbl(GetSetting(STR_APP_NAME, STR_REG_COMMON, "Ratio", 0.75)), 0.05, 0.95)
-    With geCtl.FormatStyles.Add(FMT_ACTIVE)
-        .BackColor = &H80FF00
-    End With
-    geCtl.Font.Size = 8
-    geCtl.RowHeight = geCtl.RowHeight * 8 / 10
-'    geCtl.RowHeight = 16 * Screen.TwipsPerPixelY
+    pvInitColumns
     txtInput.Font.Size = 8
     Call SendMessage(txtInput.hWnd, EM_SETTABSTOPS, 1, 16&)
     If txtInput.Font.Name <> "Consolas" Then

@@ -1,0 +1,196 @@
+//=========================================================================
+// UcsSqlMonitor.odl - Helper typelib for Ucs SQL Monitor
+//
+// Collection/dispatch interfaces used by mdGlobals.bas and the OLE in-place
+// activation interfaces needed by mdIPAO.bas. Compile with make.bat
+//=========================================================================
+
+[
+  uuid(3C80AEF3-0E90-4E11-8EFC-FE48E40FE92B),
+  version(1.0),
+  helpstring("Ucs SQL Monitor Helper Typelib")
+]
+library UcsSqlMonitorHelper
+{
+    importlib("stdole2.tlb");
+
+    typedef struct tagVBGUID {
+        long Data1;
+        short Data2;
+        short Data3;
+        unsigned char Data4[8];
+    } VBGUID;
+
+    typedef struct tagAPISIZE {
+        long cx;
+        long cy;
+    } APISIZE;
+
+    typedef struct tagOLEINPLACEFRAMEINFO {
+        long cb;
+        long fMDIApp;
+        long hwndFrame;
+        long haccel;
+        long cAccelEntries;
+    } OLEINPLACEFRAMEINFO;
+
+    typedef [public]
+    long StructPtr;
+
+    [
+      odl,
+      uuid(00000000-0000-0000-C000-000000000046)
+    ]
+    interface IUnknownUnrestricted {
+        long _stdcall QueryInterface([in] void* priid, [in, out] long* pvObj);
+        long _stdcall AddRef();
+        long _stdcall Release();
+    };
+
+    [
+      odl,
+      uuid(A4C46780-499F-101B-BB78-00AA00383CBB)
+    ]
+    interface IVbCollection : IUnknown {
+        HRESULT GetTypeInfoCount([out, retval] int* pctinfo);
+        long GetTypeInfo([in] int itinfo, [in] long lcid, [out] void* pptinfo);
+        long GetIDsOfNames([in] void* riid, [in] LPWSTR* rgszNames, [in] int cNames, [in] long lcid, [out] long* rgdispid);
+        long Invoke([in] long dispidMember, [in] void* riid, [in] long lcid, [in] short wFlags, [in] void* pdispparams, [out] VARIANT* pvarResult, [out] void* pexcepinfo, [out] int* puArgErr);
+        long Item([in] VARIANT* Index, [out, optional] VARIANT* pvarRet);
+        long Add([in] VARIANT* Item, [in, optional] VARIANT* Key, [in, optional] VARIANT* Before, [in, optional] VARIANT* After);
+        long Count([out] long* pcRet);
+        long Remove([in] VARIANT* Index);
+        long NewEnum([out] IUnknown** ppunk);
+    };
+
+    [
+      odl,
+      uuid(00020400-0000-0000-C000-000000000046)
+    ]
+    interface IVbDispatch : IUnknown {
+        HRESULT GetTypeInfoCount([out, retval] int* pctinfo);
+        long GetTypeInfo([in] int itinfo, [in] long lcid, [out] void* pptinfo);
+        long GetIDsOfNames([in] void* riid, [in] LPWSTR* rgszNames, [in] int cNames, [in] long lcid, [out] long* rgdispid);
+        long Invoke([in] long dispidMember, [in] void* riid, [in] long lcid, [in] short wFlags, [in] void* pdispparams, [out] void* pvarResult, [out] void* pexcepinfo, [out] int* puArgErr);
+    };
+
+    [
+      odl,
+      uuid(0000010E-0000-0000-C000-000000000046)
+    ]
+    interface IDataObject : IUnknown {
+    };
+
+    [
+      odl,
+      uuid(00000112-0000-0000-C000-000000000046)
+    ]
+    interface IOleObject : IUnknown {
+        HRESULT _stdcall SetClientSite([in] long ppClientSite);
+        long _stdcall GetClientSite([out] IUnknown** ppClientSite);
+        HRESULT _stdcall SetHostNames([in] LPWSTR szContainerApp, [in] LPWSTR szContainerObj);
+        HRESULT _stdcall Close([in] long dwSaveOption);
+        HRESULT _stdcall SetMoniker([in] long dwWhichMoniker, [in] long pmIMoniker);
+        HRESULT _stdcall GetMoniker([in] long dwAssign, [in] long dwWhichMoniker, [out, retval] long* ppmk);
+        HRESULT _stdcall InitFromData([in] IDataObject* pDataObject, [in] long fCreation, [in] long dwReserved);
+        HRESULT _stdcall GetClipboardData([in] long dwReserved, [out, retval] IDataObject** ppDataObject);
+        HRESULT _stdcall DoVerb([in] long iVerb, [in] long lpmsg, [in] long pActiveSite, [in] long lindex, [in] long hwndParent, [in] long lprcPosRect);
+        long _stdcall EnumVerbs([in, out] long* ppEnumOleVerb);
+        HRESULT _stdcall Update();
+        long _stdcall IsUpToDate();
+        HRESULT _stdcall GetUserClassID([out] VBGUID* pclsid);
+        HRESULT _stdcall GetUserType([in] long dwFormOfType, [out, retval] long* pszUserType);
+        HRESULT _stdcall SetExtent([in] long dwDrawAspect, [in, out] APISIZE* pSize);
+        HRESULT _stdcall GetExtent([in] long dwDrawAspect, [in, out] APISIZE* pSize);
+        HRESULT _stdcall Advise([in] long pIAdviseSink, [in, out] long* pdwConnection);
+        HRESULT _stdcall Unadvise([in] long dwConnection);
+        HRESULT _stdcall EnumAdvise([out, retval] long* ppenumAdvise);
+        HRESULT _stdcall GetMiscStatus([in] long dwAspect, [out, retval] long* pdwStatus);
+        HRESULT _stdcall SetColorScheme([in] long pLogpal);
+    };
+
+    [
+      odl,
+      uuid(00000114-0000-0000-C000-000000000046)
+    ]
+    interface IOleWindow : IUnknown {
+        HRESULT _stdcall GetWindow([out, retval] long* phwnd);
+        HRESULT _stdcall ContextSensitiveHelp([in] long fEnterMode);
+    };
+
+    [
+      odl,
+      uuid(00000115-0000-0000-C000-000000000046)
+    ]
+    interface IOleInPlaceUIWindow : IOleWindow {
+        HRESULT _stdcall GetBorder([in] StructPtr lprectBorder);
+        HRESULT _stdcall RequestBorderSpace([in] StructPtr pborderwidths);
+        HRESULT _stdcall SetBorderSpace([in] StructPtr pborderwidths);
+        HRESULT _stdcall SetActiveObject([in] long pActiveObject, [in] LPWSTR pszObjName);
+    };
+
+    [
+      odl,
+      uuid(00000116-0000-0000-C000-000000000046)
+    ]
+    interface IOleInPlaceFrame : IOleInPlaceUIWindow {
+        HRESULT _stdcall InsertMenus([in] long hmenuShared, [in] StructPtr lpMenuWidths);
+        HRESULT _stdcall SetMenu([in] long hmenuShared, [in] long holemenu, [in] long hwndActiveObject);
+        HRESULT _stdcall RemoveMenus([in] long hmenuShared);
+        HRESULT _stdcall SetStatusText([in] long pszStatusText);
+        HRESULT _stdcall EnableModeless([in] long fEnable);
+        HRESULT _stdcall TranslateAccelerator([in] StructPtr lpmsg, [in] long wID);
+    };
+
+    [
+      odl,
+      uuid(00000119-0000-0000-C000-000000000046)
+    ]
+    interface IOleInPlaceSite : IOleWindow {
+        long _stdcall CanInPlaceActivate();
+        HRESULT _stdcall OnInPlaceActivate();
+        HRESULT _stdcall OnUIActivate();
+        HRESULT _stdcall GetWindowContext([out] IOleInPlaceFrame** ppFrame, [out] IOleInPlaceUIWindow** ppDoc, [in] StructPtr lprcPosRect, [in] StructPtr lprcClipRect, [in] StructPtr lpFrameInfo);
+        HRESULT _stdcall Scroll([in] CURRENCY scrollExtant);
+        HRESULT _stdcall OnUIDeactivate([in] long fUndoable);
+        HRESULT _stdcall OnInPlaceDeactivate();
+        HRESULT _stdcall DiscardUndoState();
+        HRESULT _stdcall DeactivateAndUndo();
+        HRESULT _stdcall OnPosRectChange([in] long lprcPosRect);
+    };
+
+    [
+      odl,
+      uuid(00000117-0000-0000-C000-000000000046)
+    ]
+    interface IOleInPlaceActiveObject : IUnknownUnrestricted {
+        long _stdcall GetWindow([out] long* phwnd);
+        long _stdcall ContextSensitiveHelp([in] long fEnterMode);
+        long _stdcall TranslateAccelerator([in] void* lpmsg);
+        long _stdcall OnFrameWindowActivate([in] long fActivate);
+        long _stdcall OnDocWindowActivate([in] long fActivate);
+        long _stdcall ResizeBorder([in] StructPtr prcBorder, [in] IOleInPlaceUIWindow* pUIWindow, [in] long fFrameWindow);
+        long _stdcall EnableModeless([in] long fEnable);
+    };
+
+    [
+      odl,
+      uuid(B196B289-BAB4-101A-B69C-00AA00341D07)
+    ]
+    interface IOleControlSite : IUnknown {
+        HRESULT _stdcall OnControlInfoChanged();
+        HRESULT _stdcall LockInPlaceActive([in] long fLock);
+        HRESULT _stdcall GetExtendedControl([out, retval] IDispatch** ppDisp);
+        HRESULT _stdcall TransformCoords([in] StructPtr pPtlHimetric, [in] StructPtr pPtfContainer, [in] long dwFlags);
+        long _stdcall TranslateAccelerator([in] StructPtr lpmsg, [in] long grfModifiers);
+        HRESULT _stdcall OnFocus([in] long fGotFocus);
+        HRESULT _stdcall ShowPropertyFrame();
+    };
+
+    [dllname("msvbvm60")]
+    module Msvbvm60
+    {
+        [entry("GetMem2")]
+        HRESULT PeekInt([in] long Ptr, [out, retval] short* retval);
+    };
+};
