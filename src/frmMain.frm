@@ -139,7 +139,7 @@ Attribute m_rsResult.VB_VarHelpID = -1
 Private m_rsList            As Recordset
 Private m_cList             As Collection
 Private m_rsListSort        As Recordset
-Private m_cFieldMap         As Collection
+Private m_eMode             As UcsMonitorMode
 Private m_sServer           As String
 Private m_sFilter           As String
 Private m_bDown             As Boolean
@@ -199,8 +199,8 @@ Private Property Get pvSelectedSpids() As Collection
         End If
     End If
     If lvwMain.SelectedCount > 0 Then
-        For lIdx = 1 To lvwMain.ItemCount
-            If lvwMain.ItemSelected(lIdx) Then
+        For lIdx = 1 To lvwMain.RowCount
+            If lvwMain.RowSelected(lIdx) Then
                 If pvMoveToRow(lIdx) Then
                     pvSelectedSpids.Add m_rsListSort!SPID.Value, "#" & m_rsListSort!SPID.Value
                 End If
@@ -225,13 +225,13 @@ Private Property Set pvSelectedSpids(oValue As Collection)
         If SearchRecordset(m_rsListSort, "SPID=" & oValue(1)) Then
             lFocus = m_rsListSort.AbsolutePosition
         End If
-        For lIdx = 1 To lvwMain.ItemCount
+        For lIdx = 1 To lvwMain.RowCount
             bSelected = False
             If pvMoveToRow(lIdx) Then
                 bSelected = SearchCollection(oValue, "#" & m_rsListSort!SPID.Value)
             End If
-            If lvwMain.ItemSelected(lIdx) <> bSelected Then
-                lvwMain.ItemSelected(lIdx) = bSelected
+            If lvwMain.RowSelected(lIdx) <> bSelected Then
+                lvwMain.RowSelected(lIdx) = bSelected
             End If
         Next
         If lvwMain.FocusedRow <> lFocus Then
@@ -303,21 +303,17 @@ End Function
 
 Private Sub pvShowResults(rs As Recordset)
     Const FUNC_NAME     As String = "pvShowResults"
-    Dim rsSess          As Recordset
-    Dim rsSpids         As Recordset
-    Dim oFld            As ADODB.Field
-    Dim bRefreshData    As Boolean
-    Dim bRefreshStats   As Boolean
-    Dim bIsActive       As Boolean
-    Dim lIdx            As Long
-    Dim vElem           As Variant
     Dim sSort           As String
-    Dim vValue          As Variant
-    Dim sKey            As String
-    Dim cResult         As Collection
+    Dim bRefreshData    As Boolean
     Dim lIter           As Long
-    Dim lSessIter       As Long
-    
+    Dim lIdx            As Long
+    Dim oFld            As ADODB.Field
+    Dim vValue          As Variant
+    Dim cResult         As Collection
+    Dim sKey            As String
+    Dim bIsActive       As Boolean
+    Dim bRefreshStats   As Boolean
+
     On Error GoTo EH
     If rs Is Nothing Then
         Exit Sub
@@ -325,9 +321,6 @@ Private Sub pvShowResults(rs As Recordset)
     If rs.State <> adStateOpen Then
         Exit Sub
     End If
-    On Error Resume Next
-    Set rsSpids = rs.NextRecordset
-    On Error GoTo EH
     '--- create list
     If m_rsList Is Nothing Then
         Set m_rsList = CreateRecordset( _
@@ -345,21 +338,12 @@ Private Sub pvShowResults(rs As Recordset)
             "SP2", adInteger, _
             "Wait", adVarWChar, 64, _
             "Trans", adInteger, _
-            "Input_Buffer", adBSTR, _
             "Input_Buffer2", adBSTR, _
             "IsActive", adBoolean, _
             "LastActive", adBoolean)
         Set m_rsListSort = m_rsList.Clone
         m_rsListSort.Sort = "DB, Login, Host, SPID"
         m_rsListSort.Filter = pvGetFilter
-        Set m_cFieldMap = New Collection
-        If InStr(m_oCmd.CommandText, "sp_whoisactive") Then
-            Const STR_WHOISACTIVE_MAP As String = "SPID;session_id|Status;status|Login;login_name|Host;host_name|Blk;blocking_session_id|DB;database_name|Command;percent_complete|CPU;CPU|Dsk;physical_reads|Last_Batch;start_time|Program;program_name|SP2;request_id|Wait;wait_info|Trans;open_tran_count|Input_Buffer;sql_text"
-            For Each vElem In Split(STR_WHOISACTIVE_MAP, "|")
-                vElem = Split(vElem, ";")
-                m_cFieldMap.Add vElem(0), vElem(1)
-            Next
-        End If
     Else
         sSort = m_rsListSort.Sort
         With New PropertyBag
@@ -380,126 +364,48 @@ Private Sub pvShowResults(rs As Recordset)
             "Opers", adInteger)
         Set m_cStats = InitIndexCollection(m_rsStats, "Host", "Login", "DB")
     End If
-    If Not rsSpids Is Nothing And m_rsList.RecordCount > 0 Then
-        Do While MoveRecordset(m_rsList, lIter)
-            If m_rsList!IsActive.Value Or LCase$(C_Str(m_rsList!Status.Value)) <> "sleeping" Then
-                If Not SearchRecordset(rs, "session_id=" & m_rsList!SPID.Value) Then
-                    m_oCmd.Parameters("show_sleeping_spids").Value = 2
-                    m_oCmd.Parameters("filter").Value = m_rsList!SPID.Value
-                    Set rsSess = New Recordset
-                    rsSess.CursorLocation = adUseClient
-                    rsSess.Open m_oCmd, , adOpenStatic, adLockBatchOptimistic
-                    If rsSess.RecordCount > 0 Then
-                        Do While MoveRecordset(rsSess, lSessIter)
-                            If SearchRecordset(m_rsList, "SPID=" & rsSess!session_id.Value) Then
-                                If pvCopyRow(rsSess, m_rsList) Then
-                                    bRefreshData = True
-                                End If
-                                m_rsList!IsActive.Value = False
-                            End If
-                        Loop
-                    Else
-                        m_rsList.Delete
-                    End If
-                End If
-            Else
-                m_rsList!IsActive.Value = False
-            End If
-        Loop
-    End If
     Debug.Print "Before sync rs", Timer
-    '--- sync rs
+    '--- sync rs, sp_who2 columns map to list fields by position up to REQUESTID
     Set m_cList = InitIndexCollection(m_rsList, "SPID")
     Do While MoveRecordset(rs, lIter)
-        If SearchCollection(rs.Fields, "session_id") Then
-            If Not SetBookmark(m_rsList, m_cList, "#" & Trim$(C_Str(rs!session_id.Value))) Then
-                m_rsList.AddNew
-                m_rsList!LastActive.Value = False
-                m_rsList!SPID.Value = Trim$(C_Str(rs!session_id.Value))
-                RemoveCollection m_cList, "#" & m_rsList!SPID.Value
-                m_cList.Add m_rsList.Bookmark, "#" & m_rsList!SPID.Value
-            End If
-            If pvCopyRow(rs, m_rsList) Then
-                bRefreshData = True
-            End If
+        If Not SetBookmark(m_rsList, m_cList, "#" & Trim$(C_Str(rs!SPID.Value))) Then
+            m_rsList.AddNew
+            m_rsList!IsActive.Value = False
+            m_rsList!LastActive.Value = False
+            m_rsList!SPID.Value = Trim$(C_Str(rs!SPID.Value))
+            RemoveCollection m_cList, "#" & m_rsList!SPID.Value
+            m_cList.Add m_rsList.Bookmark, "#" & m_rsList!SPID.Value
         Else
-            If Not SetBookmark(m_rsList, m_cList, "#" & Trim$(C_Str(rs!SPID.Value))) Then
-                m_rsList.AddNew
-                m_rsList!IsActive.Value = False
-                m_rsList!LastActive.Value = False
-                m_rsList!SPID.Value = Trim$(C_Str(rs!SPID.Value))
-                RemoveCollection m_cList, "#" & m_rsList!SPID.Value
-                m_cList.Add m_rsList.Bookmark, "#" & m_rsList!SPID.Value
-            Else
-                Debug.Assert C_Str(m_rsList!SPID.Value) = Trim$(C_Str(rs!SPID.Value))
-            End If
-            If InStr(m_oCmd.CommandText, "sp_who2") > 0 Then
-                lIdx = 0
-                m_rsList!IsActive.Value = False
-                For Each oFld In rs.Fields
-                    If oFld.Name = "REQUESTID" Then
-                        Exit For
-                    End If
-                    vValue = Trim$(C_Str(oFld.Value))
-                    If m_rsList(lIdx).Name = "Wait" And Trim$(C_Str(vValue)) = "0" Then
-                        vValue = "."
-                    ElseIf m_rsList(lIdx).Name = "Command" And vValue = "AWAITING COMMAND" Then
-                        vValue = vbNullString
-                    End If
-                    If C_Str(m_rsList(lIdx).Value) <> vValue Then
-                        Debug.Assert m_rsList(lIdx).Name <> "SPID"
-                        If Not IsNull(m_rsList(lIdx).Value) Then
-                            m_rsList!IsActive.Value = True
-                        End If
-                        m_rsList(lIdx).Value = C_Str(vValue)
-                        bRefreshData = True
-                    Else
-                        m_rsList(lIdx).Value = C_Str(m_rsList(lIdx).Value)
-                    End If
-                    lIdx = lIdx + 1
-                Next
-            Else
-                If Trim$(rs!Program.Value) = "sp_who_3 Input Buffers" And Not m_bSystemProcesses Then
-                    RemoveCollection m_cList, "#" & C_Str(rs!SPID.Value)
-                    m_rsList.Delete
-                ElseIf Trim$(rs!Program.Value) = "Ucs SQL Monitor" And Not m_bSystemProcesses Then
-                    RemoveCollection m_cList, "#" & C_Str(rs!SPID.Value)
-                    m_rsList.Delete
-                Else
-                    m_rsList!IsActive.Value = False
-                    For Each oFld In rs.Fields
-                        vValue = Trim$(C_Str(oFld.Value))
-                        If oFld.Name = "Trans" And vValue = "." Then
-                            vValue = Null
-                        ElseIf oFld.Name = "Command" And vValue = "AWAITING COMMAND" Then
-                            vValue = vbNullString
-                        End If
-                        If C_Str(m_rsList(oFld.Name).Value) <> C_Str(vValue) Then
-                            If Not IsNull(m_rsList(oFld.Name).Value) Then
-                                m_rsList!IsActive.Value = True
-                            End If
-                            If LCase(oFld.Name) = "input_buffer" And LenB(m_rsList!Input_Buffer.Value) <> 0 Then
-                                m_rsList!Input_Buffer2.Value = Right(C_Str(m_rsList!Input_Buffer2.Value) & m_rsList!Input_Buffer.Value & _
-                                    IIf(Right$(m_rsList!Input_Buffer.Value, 2) <> vbCrLf, vbCrLf, vbNullString) & "GO" & vbCrLf, 32000)
-                            End If
-                            m_rsList(oFld.Name).Value = vValue
-                            bRefreshData = True
-                        ElseIf m_rsList(oFld.Name).Type <> adInteger Then
-                            m_rsList(oFld.Name).Value = C_Str(m_rsList(oFld.Name).Value)
-                        End If
-                    Next
-                    If C_Lng(m_rsList!Trans.Value) > 0 Then
-                        m_rsList!IsActive.Value = True
-                    End If
-                End If
-            End If
+            Debug.Assert C_Str(m_rsList!SPID.Value) = Trim$(C_Str(rs!SPID.Value))
         End If
+        lIdx = 0
+        m_rsList!IsActive.Value = False
+        For Each oFld In rs.Fields
+            If oFld.Name = "REQUESTID" Then
+                Exit For
+            End If
+            vValue = Trim$(C_Str(oFld.Value))
+            If m_rsList(lIdx).Name = "Wait" And Trim$(C_Str(vValue)) = "0" Then
+                vValue = "."
+            ElseIf m_rsList(lIdx).Name = "Command" And vValue = "AWAITING COMMAND" Then
+                vValue = vbNullString
+            End If
+            If C_Str(m_rsList(lIdx).Value) <> vValue Then
+                Debug.Assert m_rsList(lIdx).Name <> "SPID"
+                If Not IsNull(m_rsList(lIdx).Value) Then
+                    m_rsList!IsActive.Value = True
+                End If
+                m_rsList(lIdx).Value = C_Str(vValue)
+                bRefreshData = True
+            Else
+                m_rsList(lIdx).Value = C_Str(m_rsList(lIdx).Value)
+            End If
+            lIdx = lIdx + 1
+        Next
     Loop
     Debug.Print "Before m_rsList", Timer
     If m_rsList.RecordCount <> 0 Then
-        If Not SearchCollection(rs.Fields, "session_id") Then
-            Set cResult = InitIndexCollection(rs, "SPID")
-        End If
+        Set cResult = InitIndexCollection(rs, "SPID")
         lIter = 0
         Do While MoveRecordset(m_rsList, lIter)
             sKey = C_Str(m_rsList!Host.Value) & "#" & C_Str(m_rsList!Login.Value) & "#" & C_Str(m_rsList!DB.Value)
@@ -541,9 +447,9 @@ LoopNext:
         Loop
     End If
     lvwMain.Redraw = False
-    If lvwMain.ItemCount <> m_rsListSort.RecordCount Then
+    If lvwMain.RowCount <> m_rsListSort.RecordCount Then
         m_bInSet = True
-        lvwMain.ItemCount = m_rsListSort.RecordCount
+        lvwMain.RowCount = m_rsListSort.RecordCount
         m_bInSet = False
         bRefreshData = True
     End If
@@ -563,54 +469,6 @@ EH:
     End If
     tmrFetch.Enabled = False
 End Sub
-
-Private Function pvCopyRow(rs As Recordset, rsList As Recordset) As Boolean
-    Const FUNC_NAME     As String = "pvCopyRow"
-    Dim oFld            As ADODB.Field
-    Dim sField          As String
-    Dim vValue          As Variant
-    
-    On Error GoTo EH
-    m_rsList!LastActive.Value = rsList!IsActive.Value
-    rsList!IsActive.Value = False
-    For Each oFld In rs.Fields
-        If SearchCollection(m_cFieldMap, oFld.Name) Then
-            sField = m_cFieldMap(oFld.Name)
-            If IsNull(oFld.Value) Then
-                vValue = Null
-            Else
-                Select Case rsList.Fields(sField).Type
-                Case adInteger
-                    If LCase(sField) = "trans" And C_Lng(oFld.Value) = 0 Then
-                        vValue = Null
-                    Else
-                        vValue = C_Lng(oFld.Value)
-                    End If
-                Case adBoolean
-                    vValue = C_Bool(oFld.Value)
-                Case Else
-                    vValue = C_Str(oFld.Value)
-                End Select
-            End If
-            If C_Str(rsList.Fields(sField).Value) <> C_Str(vValue) Then
-                If Not IsNull(vValue) Then
-                    rsList!IsActive.Value = True
-                End If
-                rsList.Fields(sField).Value = vValue
-                If LCase(sField) = "input_buffer" And LenB(rsList!Input_Buffer.Value) <> 0 Then
-                    rsList!Input_Buffer2.Value = Right(C_Str(rsList!Input_Buffer2.Value) & rsList!Input_Buffer.Value & _
-                        IIf(Right$(rsList!Input_Buffer.Value, 2) <> vbCrLf, vbCrLf, vbNullString) & "GO" & vbCrLf, 32000)
-                End If
-                pvCopyRow = True
-            End If
-        End If
-    Next
-    rsList!IsActive.Value = (LCase$(rsList!Status.Value) <> "sleeping" And LCase$(rsList!Status.Value) <> "background") Or C_Lng(rsList!Trans.Value) > 0
-    Exit Function
-EH:
-    PrintError FUNC_NAME
-    Resume Next
-End Function
 
 Private Sub pvSetCaption(oForm As VB.Form)
     oForm.Caption = IIf(LenB(m_sFilter) <> 0, m_sFilter & " - ", vbNullString) & STR_APP_NAME & " - [" & m_sServer & "]"
@@ -676,6 +534,10 @@ Private Sub pvTestConn()
     End If
 End Sub
 
+Private Sub pvFetchExtEvents()
+    '--- TODO: read new UcsSqlMonitor events and live requests, resync list on dropped_event_count change
+End Sub
+
 '=========================================================================
 ' Control events
 '=========================================================================
@@ -723,8 +585,8 @@ EH:
     Resume Next
 End Sub
 
-Private Sub lvwMain_GetItemText(ByVal Row As Long, ByVal Col As Long, Text As String)
-    Const FUNC_NAME     As String = "lvwMain_GetItemText"
+Private Sub lvwMain_GetCellText(ByVal Row As Long, ByVal Col As Long, Text As String)
+    Const FUNC_NAME     As String = "lvwMain_GetCellText"
     Dim vValue          As Variant
 
     On Error GoTo EH
@@ -745,8 +607,8 @@ EH:
     Resume Next
 End Sub
 
-Private Sub lvwMain_ItemPrePaint(ByVal Row As Long, Color As OLE_COLOR, BackColor As OLE_COLOR, Bold As Boolean, Handled As Boolean)
-    Const FUNC_NAME     As String = "lvwMain_ItemPrePaint"
+Private Sub lvwMain_RowPrePaint(ByVal Row As Long, Color As OLE_COLOR, BackColor As OLE_COLOR, Bold As Boolean, Handled As Boolean)
+    Const FUNC_NAME     As String = "lvwMain_RowPrePaint"
 
     On Error GoTo EH
     If pvMoveToRow(Row) Then
@@ -887,7 +749,7 @@ Private Sub mnuFile_Click(Index As Integer)
         m_bDelayFetch = False
         Set m_rsResult = Nothing
         Set m_oConn = Nothing
-        If oFrmConnect.frInit(m_oCmd, lRefreshRate, m_bSystemProcesses, m_sPassword) Then
+        If oFrmConnect.frInit(m_oCmd, m_eMode, lRefreshRate, m_bSystemProcesses, m_sPassword) Then
             Set m_oConn = m_oCmd.ActiveConnection
             With m_oConn.Execute("SELECT srvnetname FROM sysservers WHERE srvid = 0")
                 If Not .EOF Then
@@ -907,7 +769,7 @@ Private Sub mnuFile_Click(Index As Integer)
         Else
             Caption = STR_APP_NAME
         End If
-        lvwMain.ItemCount = 0
+        lvwMain.RowCount = 0
     Case ucsMnuFileFilter
         sFilter = InputBox("Program Filter (use * for wildcards)", "Filter", m_sFilter)
         If StrPtr(sFilter) <> 0 Then
@@ -919,7 +781,7 @@ Private Sub mnuFile_Click(Index As Integer)
             pvSetCaption Me
             If Not m_rsListSort Is Nothing Then
                 m_rsListSort.Filter = pvGetFilter
-                lvwMain.ItemCount = m_rsListSort.RecordCount
+                lvwMain.RowCount = m_rsListSort.RecordCount
                 pvRefreshUI
             End If
         End If
@@ -963,8 +825,8 @@ Private Sub mnuPopup_Click(Index As Integer)
     On Error GoTo EH
     Select Case Index
     Case ucsMnuPopupKill
-        For lIdx = 1 To lvwMain.ItemCount
-            If lvwMain.ItemSelected(lIdx) Then
+        For lIdx = 1 To lvwMain.RowCount
+            If lvwMain.RowSelected(lIdx) Then
                 If pvMoveToRow(lIdx) Then
                     m_oConn.Execute "KILL " & m_rsListSort!SPID.Value
                 End If
@@ -1012,6 +874,10 @@ Private Sub tmrFetch_Timer()
     Dim lState          As Long
   
     On Error GoTo EH
+    If m_eMode = ucsMonExtEvents Then
+        pvFetchExtEvents
+        Exit Sub
+    End If
     If m_rsResult Is Nothing Then
         Set m_rsResult = New Recordset
         m_rsResult.CursorLocation = adUseClient
@@ -1029,12 +895,6 @@ Private Sub tmrFetch_Timer()
     End If
     If lState = adStateOpen Then
         m_rsResult.Close
-    End If
-    If SearchCollection(m_oCmd.Parameters, "show_sleeping_spids") Then
-        m_oCmd.Parameters("show_sleeping_spids").Value = IIf(m_rsList Is Nothing, 2, 1)
-    End If
-    If SearchCollection(m_oCmd.Parameters, "filter") Then
-        m_oCmd.Parameters("filter").Value = vbNullString
     End If
     On Error Resume Next
     m_rsResult.Open m_oCmd, , adOpenStatic, adLockBatchOptimistic, adAsyncExecute Or adAsyncFetch

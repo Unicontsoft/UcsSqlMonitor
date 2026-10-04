@@ -11,6 +11,11 @@ Public Enum LongPtr
     [_]
 End Enum
 
+Public Enum UcsMonitorMode
+    ucsMonSpWho2
+    ucsMonExtEvents
+End Enum
+
 Public Enum UcsErrorIndexes
     ucsErrNumber
     ucsErrSource
@@ -79,6 +84,7 @@ Public Const LVSICF_NOSCROLL                As Long = &H2
 Public Const LVM_GETITEMCOUNT               As Long = &H1004
 Public Const LVM_DELETEALLITEMS             As Long = &H1009
 Public Const LVM_GETNEXTITEM                As Long = &H100C
+Public Const LVM_GETITEMRECT                As Long = &H100E
 Public Const LVM_HITTEST                    As Long = &H1012
 Public Const LVM_ENSUREVISIBLE              As Long = &H1013
 Public Const LVM_REDRAWITEMS                As Long = &H1015
@@ -110,11 +116,13 @@ Public Const NM_DBLCLK                      As Long = -3
 Public Const NM_CLICK                       As Long = -2
 '--- for NMCUSTOMDRAW.dwDrawStage
 Public Const CDDS_PREPAINT                  As Long = &H1
-Public Const CDDS_ITEM                      As Long = &H10000
+Public Const CDDS_POSTPAINT                 As Long = &H2
+Public Const CDDS_ITEM                     As Long = &H10000
 Public Const CDDS_ITEMPREPAINT              As Long = CDDS_ITEM Or CDDS_PREPAINT
 '--- NM_CUSTOMDRAW return values
 Public Const CDRF_DODEFAULT                 As Long = &H0
 Public Const CDRF_NEWFONT                   As Long = &H2
+Public Const CDRF_NOTIFYPOSTPAINT           As Long = &H10
 Public Const CDRF_NOTIFYITEMDRAW            As Long = &H20
 '--- for CreateFontIndirect
 Public Const FW_BOLD                        As Long = 700
@@ -152,6 +160,8 @@ Public Declare Function MoveWindow Lib "user32" (ByVal hWnd As LongPtr, ByVal X 
 Public Declare Function SetFocusAPI Lib "user32" Alias "SetFocus" (ByVal hWnd As LongPtr) As LongPtr
 Public Declare Function GetKeyState Lib "user32" (ByVal nVirtKey As Long) As Integer
 Public Declare Function UpdateWindow Lib "user32" (ByVal hWnd As LongPtr) As Long
+Public Declare Function CreateSolidBrush Lib "gdi32" (ByVal crColor As Long) As LongPtr
+Public Declare Function FillRect Lib "user32" (ByVal hDC As LongPtr, lpRect As RECT, ByVal hBrush As LongPtr) As Long
 
 Public Type tagInitCommonControlsEx
    lngSize              As Long
@@ -493,10 +503,10 @@ Public Sub ClipCopy(oList As ctxListView, Optional ByVal SelectedOnly As Boolean
         aCells(lCol - 1) = oList.ColumnText(lCol)
     Next
     sText = Join(aCells, vbTab) & vbCrLf
-    For lRow = 1 To oList.ItemCount
-        If Not SelectedOnly Or oList.ItemSelected(lRow) Then
+    For lRow = 1 To oList.RowCount
+        If Not SelectedOnly Or oList.RowSelected(lRow) Then
             For lCol = 1 To lColCount
-                aCells(lCol - 1) = oList.ItemText(lRow, lCol)
+                aCells(lCol - 1) = oList.CellText(lRow, lCol)
             Next
             sText = sText & Join(aCells, vbTab) & vbCrLf
         End If

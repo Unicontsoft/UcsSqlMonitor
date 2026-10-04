@@ -36,8 +36,8 @@ Event KeyDown(KeyCode As Integer, Shift As Integer)
 Event MouseDown(Button As Integer, Shift As Integer, X As Single, Y As Single)
 Event PreviewKeyDown(wParam As Long, lParam As Long, Cancel As Boolean)
 Event Scrolled()
-Event ItemPrePaint(ByVal Row As Long, Color As OLE_COLOR, BackColor As OLE_COLOR, Bold As Boolean, Handled As Boolean)
-Event GetItemText(ByVal Row As Long, ByVal Col As Long, Text As String)
+Event RowPrePaint(ByVal Row As Long, Color As OLE_COLOR, BackColor As OLE_COLOR, Bold As Boolean, Handled As Boolean)
+Event GetCellText(ByVal Row As Long, ByVal Col As Long, Text As String)
 Event ColumnClick(ByVal Col As Long)
 Event SelectionChanged()
 Event RightClick(ByVal Row As Long)
@@ -50,6 +50,7 @@ Private Const MAX_ITEM_TEXT             As Long = 1024
 Private Const DEF_MULTISELECT           As Boolean = False
 Private Const DEF_OWNERDATA             As Boolean = False
 Private Const DEF_SORTHEADERS           As Boolean = False
+Private Const GRIDLINE_COVER            As Long = 2
 
 Private m_uIPAO                     As IPAOHookStruct
 Private m_hList                     As LongPtr
@@ -59,6 +60,13 @@ Private m_pListHook                 As IUnknown
 Private m_bMultiSelect              As Boolean
 Private m_bOwnerData                As Boolean
 Private m_bSortHeaders              As Boolean
+Private m_aPainted()                As UcsPaintedRow
+Private m_lPaintedCount             As Long
+
+Private Type UcsPaintedRow
+    Index                   As Long
+    BackColor               As Long
+End Type
 
 '=========================================================================
 ' Error management
@@ -114,14 +122,14 @@ Public Property Get hWndList() As LongPtr
     hWndList = m_hList
 End Property
 
-Public Property Get ItemCount() As Long
+Public Property Get RowCount() As Long
     If m_hList <> 0 Then
-        ItemCount = SendMessage(m_hList, LVM_GETITEMCOUNT, 0, ByVal 0&)
+        RowCount = SendMessage(m_hList, LVM_GETITEMCOUNT, 0, ByVal 0&)
     End If
 End Property
 
-'--- only an owner-data list has a count of its own, its rows come from GetItemText
-Public Property Let ItemCount(ByVal lValue As Long)
+'--- only an owner-data list has a count of its own, its rows come from GetCellText
+Public Property Let RowCount(ByVal lValue As Long)
     If m_hList <> 0 And m_bOwnerData Then
         Call SendMessage(m_hList, LVM_SETITEMCOUNT, lValue, ByVal LVSICF_NOSCROLL)
     End If
@@ -166,13 +174,13 @@ Public Property Get SelectedCount() As Long
     End If
 End Property
 
-Public Property Get ItemSelected(ByVal lRow As Long) As Boolean
+Public Property Get RowSelected(ByVal lRow As Long) As Boolean
     If m_hList <> 0 And lRow >= 1 Then
-        ItemSelected = (SendMessage(m_hList, LVM_GETITEMSTATE, lRow - 1, ByVal LVIS_SELECTED) <> 0)
+        RowSelected = (SendMessage(m_hList, LVM_GETITEMSTATE, lRow - 1, ByVal LVIS_SELECTED) <> 0)
     End If
 End Property
 
-Public Property Let ItemSelected(ByVal lRow As Long, ByVal bValue As Boolean)
+Public Property Let RowSelected(ByVal lRow As Long, ByVal bValue As Boolean)
     Dim uItem           As LVITEM
 
     If m_hList = 0 Or lRow < 1 Then
@@ -266,7 +274,7 @@ Public Property Let ColumnWidth(ByVal lCol As Long, ByVal lValue As Long)
     End If
 End Property
 
-Public Property Get ItemText(ByVal lRow As Long, ByVal lCol As Long) As String
+Public Property Get CellText(ByVal lRow As Long, ByVal lCol As Long) As String
     Dim uItem           As LVITEM
     Dim sBuffer         As String
 
@@ -278,10 +286,10 @@ Public Property Get ItemText(ByVal lRow As Long, ByVal lCol As Long) As String
     uItem.pszText = StrPtr(sBuffer)
     uItem.cchTextMax = MAX_ITEM_TEXT
     Call SendMessage(m_hList, LVM_GETITEMTEXT, lRow - 1, uItem)
-    ItemText = GetStringAt(StrPtr(sBuffer))
+    CellText = GetStringAt(StrPtr(sBuffer))
 End Property
 
-Public Property Let ItemText(ByVal lRow As Long, ByVal lCol As Long, ByVal sValue As String)
+Public Property Let CellText(ByVal lRow As Long, ByVal lCol As Long, ByVal sValue As String)
     Dim uItem           As LVITEM
 
     If m_hList = 0 Or lRow < 1 Then
@@ -319,16 +327,16 @@ Public Sub ClearColumns()
 End Sub
 
 '--- the row it landed on, which is the one below every row already there
-Public Function AddItem(ByVal sText As String) As Long
+Public Function AddRow(ByVal sText As String) As Long
     Dim uItem           As LVITEM
 
     If m_hList = 0 Then
         Exit Function
     End If
     uItem.Mask = LVIF_TEXT
-    uItem.iItem = ItemCount
+    uItem.iItem = RowCount
     uItem.pszText = StrPtr(sText)
-    AddItem = SendMessage(m_hList, LVM_INSERTITEM, 0, uItem) + 1
+    AddRow = SendMessage(m_hList, LVM_INSERTITEM, 0, uItem) + 1
 End Function
 
 Public Sub Clear()
@@ -352,7 +360,7 @@ End Sub
 Public Sub Refresh()
     Dim lCount          As Long
 
-    lCount = ItemCount
+    lCount = RowCount
     If lCount > 0 Then
         Call SendMessage(m_hList, LVM_REDRAWITEMS, 0, ByVal lCount - 1)
     End If
@@ -533,18 +541,28 @@ Private Function pvCustomDraw(ByVal lParam As Long, lReturn As Long) As Boolean
     pvCustomDraw = True
     Select Case uDraw.Nmcd.dwDrawStage
     Case CDDS_PREPAINT
-        lReturn = CDRF_NOTIFYITEMDRAW
+        m_lPaintedCount = 0
+        lReturn = CDRF_NOTIFYITEMDRAW Or CDRF_NOTIFYPOSTPAINT
+    Case CDDS_POSTPAINT
+        '--- gridlines are drawn after all rows so cover them on coloured rows last
+        pvCoverGridlines uDraw.Nmcd.hDC
+        lReturn = CDRF_DODEFAULT
     Case CDDS_ITEMPREPAINT
         lReturn = CDRF_DODEFAULT
         clrText = uDraw.clrText
         clrBack = uDraw.clrTextBk
-        RaiseEvent ItemPrePaint(uDraw.Nmcd.dwItemSpec + 1, clrText, clrBack, bBold, bHandled)
+        RaiseEvent RowPrePaint(uDraw.Nmcd.dwItemSpec + 1, clrText, clrBack, bBold, bHandled)
         If Not bHandled Then
             Exit Function
         End If
         If bBold And m_hFontBold <> 0 Then
             Call SelectObject(uDraw.Nmcd.hDC, m_hFontBold)
             lReturn = CDRF_NEWFONT
+        End If
+        If clrBack <> uDraw.clrTextBk Then
+            '--- clrTextBk covers only each cell's text box, not the padding between cells
+            pvFillRow uDraw.Nmcd.hDC, uDraw.Nmcd.dwItemSpec, TranslateColor(clrBack)
+            pvAddPainted uDraw.Nmcd.dwItemSpec, TranslateColor(clrBack)
         End If
         If clrText <> uDraw.clrText Or clrBack <> uDraw.clrTextBk Then
             uDraw.clrText = TranslateColor(clrText)
@@ -555,6 +573,66 @@ Private Function pvCustomDraw(ByVal lParam As Long, lReturn As Long) As Boolean
         lReturn = CDRF_DODEFAULT
     End Select
 End Function
+
+Private Sub pvFillRow(ByVal hDC As LongPtr, ByVal lIndex As Long, ByVal clrBack As Long)
+    Dim uRect           As RECT
+    Dim hBrush          As LongPtr
+
+    uRect.Left = LVIR_BOUNDS
+    If SendMessage(m_hList, LVM_GETITEMRECT, lIndex, uRect) = 0 Then
+        Exit Sub
+    End If
+    hBrush = CreateSolidBrush(clrBack)
+    If hBrush <> 0 Then
+        Call FillRect(hDC, uRect, hBrush)
+        Call DeleteObject(hBrush)
+    End If
+End Sub
+
+Private Sub pvAddPainted(ByVal lIndex As Long, ByVal clrBack As Long)
+    If m_lPaintedCount = 0 Then
+        ReDim m_aPainted(0 To 31) As UcsPaintedRow
+    ElseIf m_lPaintedCount > UBound(m_aPainted) Then
+        ReDim Preserve m_aPainted(0 To 2 * m_lPaintedCount - 1) As UcsPaintedRow
+    End If
+    m_aPainted(m_lPaintedCount).Index = lIndex
+    m_aPainted(m_lPaintedCount).BackColor = clrBack
+    m_lPaintedCount = m_lPaintedCount + 1
+End Sub
+
+Private Sub pvCoverGridlines(ByVal hDC As LongPtr)
+    Dim lColCount       As Long
+    Dim lIdx            As Long
+    Dim uRow            As RECT
+    Dim hBrush          As LongPtr
+    Dim lCol            As Long
+    Dim uCell           As RECT
+    Dim uLine           As RECT
+
+    lColCount = ColumnCount
+    For lIdx = 0 To m_lPaintedCount - 1
+        uRow.Left = LVIR_BOUNDS
+        If SendMessage(m_hList, LVM_GETITEMRECT, m_aPainted(lIdx).Index, uRow) <> 0 Then
+            hBrush = CreateSolidBrush(m_aPainted(lIdx).BackColor)
+            If hBrush <> 0 Then
+                '--- the vertical gridline sits on each cell's right edge, inside the cell padding
+                For lCol = 1 To lColCount - 1
+                    uCell.Top = lCol
+                    uCell.Left = LVIR_BOUNDS
+                    If SendMessage(m_hList, LVM_GETSUBITEMRECT, m_aPainted(lIdx).Index, uCell) <> 0 Then
+                        uLine.Left = uCell.Left - GRIDLINE_COVER
+                        uLine.Top = uRow.Top
+                        uLine.Right = uCell.Left + GRIDLINE_COVER
+                        uLine.Bottom = uRow.Bottom
+                        Call FillRect(hDC, uLine, hBrush)
+                    End If
+                Next
+                Call DeleteObject(hBrush)
+            End If
+        End If
+    Next
+    m_lPaintedCount = 0
+End Sub
 
 Private Sub pvNotify(ByVal lParam As Long)
     Dim uHdr            As NMHDR
@@ -606,7 +684,7 @@ Private Sub pvGetDispInfo(ByVal lParam As Long)
     If (uInfo.Item.Mask And LVIF_TEXT) = 0 Or uInfo.Item.pszText = 0 Or uInfo.Item.cchTextMax <= 0 Then
         Exit Sub
     End If
-    RaiseEvent GetItemText(uInfo.Item.iItem + 1, uInfo.Item.iSubItem + 1, sText)
+    RaiseEvent GetCellText(uInfo.Item.iItem + 1, uInfo.Item.iSubItem + 1, sText)
     lLen = Len(sText)
     If lLen > uInfo.Item.cchTextMax - 1 Then
         lLen = uInfo.Item.cchTextMax - 1

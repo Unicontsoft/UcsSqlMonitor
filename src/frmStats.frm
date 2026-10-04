@@ -113,9 +113,9 @@ Private Sub pvSetRecordset(rs As Recordset)
     If Not rs Is Nothing Then
         Set m_rsStats = rs.Clone
         m_rsStats.Sort = sSort
-        lvwStats.ItemCount = m_rsStats.RecordCount
+        lvwStats.RowCount = m_rsStats.RecordCount
     Else
-        lvwStats.ItemCount = 0
+        lvwStats.RowCount = 0
     End If
     lvwStats.Refresh
 End Sub
@@ -183,8 +183,8 @@ EH:
     Resume Next
 End Sub
 
-Private Sub lvwStats_GetItemText(ByVal Row As Long, ByVal Col As Long, Text As String)
-    Const FUNC_NAME     As String = "lvwStats_GetItemText"
+Private Sub lvwStats_GetCellText(ByVal Row As Long, ByVal Col As Long, Text As String)
+    Const FUNC_NAME     As String = "lvwStats_GetCellText"
     Dim vValue          As Variant
 
     On Error GoTo EH
