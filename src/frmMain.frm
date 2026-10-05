@@ -774,13 +774,12 @@ Private Sub pvAddServer( _
     If Not pvInitServer(oServer, oCmd, eMode, lRefreshRate, bSystemProcesses, bStatements, sConnectString, sServer) Then
         Exit Sub
     End If
+    '--- an existing one is replaced as the dialog may have changed its settings, a connected one
+    '--- is shut down after the new one is in, so a shared events session outlives the swap
     If SearchCollection(m_cServers, LCase$(oServer.Server), RetVal:=oOther) Then
         If oOther.Connected Then
-            MsgBox oServer.Server & " is already connected", vbExclamation
-            oServer.Shutdown
-            Exit Sub
+            pvDisconnect oOther.Server
         End If
-        '--- a disconnected one in the tree is replaced, the dialog may have changed its settings
         m_cServers.Remove LCase$(oServer.Server)
     End If
     m_cServers.Add oServer, LCase$(oServer.Server)
