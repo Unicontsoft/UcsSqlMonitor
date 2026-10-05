@@ -198,7 +198,8 @@ Private m_rsList            As Recordset
 Private m_cList             As Collection
 Private m_rsListSort        As Recordset
 Private m_sFilter           As String
-Private m_bDown             As Boolean
+Private m_oFilter           As cRowFilter
+Private m_bDown            As Boolean
 Private m_dblDownX          As Double
 Private m_dblRatio          As Double
 Private m_dblTreeWidth      As Double
@@ -366,13 +367,48 @@ EH:
     Resume Next
 End Sub
 
-Private Function pvGetFilter() As String
-    If LenB(m_sFilter) <> 0 Then
-        pvGetFilter = "Server LIKE '" & Quote(m_sFilter) & "' OR Program LIKE '" & Quote(m_sFilter) & "' OR DB LIKE '" & Quote(m_sFilter) & "' OR Host LIKE '" & Quote(m_sFilter) & "' OR Login LIKE '" & Quote(m_sFilter) & "' OR Status LIKE '" & Quote(m_sFilter) & "' OR Command LIKE '" & Quote(m_sFilter) & "'"
+'--- parses and stores the filter text, False with a message when it is not valid
+Private Function pvSetFilter(sFilter As String) As Boolean
+    Dim oFilter         As cRowFilter
+
+    On Error GoTo EH
+    Set oFilter = New cRowFilter
+    oFilter.Init sFilter
+    If oFilter.Active Then
+        Set m_oFilter = oFilter
     Else
-        pvGetFilter = vbNullString
+        Set m_oFilter = Nothing
     End If
+    m_sFilter = sFilter
+    pvSetFilter = True
+    Exit Function
+EH:
+    MsgBox "Invalid filter: " & Err.Description, vbExclamation
 End Function
+
+'--- ADO filters have no NOT and cannot AND groups of ORs, so rows are matched here
+Private Sub pvApplyFilter()
+    Dim lIter           As Long
+
+    If m_rsListSort Is Nothing Then
+        Exit Sub
+    End If
+    If m_oFilter Is Nothing Then
+        m_rsListSort.Filter = vbNullString
+        Exit Sub
+    End If
+    Do While MoveRecordset(m_rsList, lIter)
+        m_rsList!IsMatch.Value = m_oFilter.Matches(Array( _
+            LCase$(C_Str(m_rsList!Server.Value)), _
+            LCase$(C_Str(m_rsList!Program.Value)), _
+            LCase$(C_Str(m_rsList!DB.Value)), _
+            LCase$(C_Str(m_rsList!Host.Value)), _
+            LCase$(C_Str(m_rsList!Login.Value)), _
+            LCase$(C_Str(m_rsList!Status.Value)), _
+            LCase$(C_Str(m_rsList!Command.Value))))
+    Loop
+    m_rsListSort.Filter = "IsMatch = True"
+End Sub
 
 Private Sub pvShowResults(oServer As cServerMonitor, rs As Recordset)
     Const FUNC_NAME     As String = "pvShowResults"
@@ -518,10 +554,11 @@ Private Sub pvPrepareList()
             "IsActive", adBoolean, _
             "LastActive", adBoolean, _
             "LoginTime", adDate, _
-            "Server", adVarWChar, 128)
+            "Server", adVarWChar, 128, _
+            "IsMatch", adBoolean)
         Set m_rsListSort = m_rsList.Clone
         m_rsListSort.Sort = "Server, DB, Login, Host, SPID"
-        m_rsListSort.Filter = pvGetFilter
+        pvApplyFilter
         pvShowSortOrder
     Else
         sSort = m_rsListSort.Sort
@@ -531,7 +568,7 @@ Private Sub pvPrepareList()
         End With
         Set m_rsListSort = m_rsList.Clone
         m_rsListSort.Sort = sSort
-        m_rsListSort.Filter = pvGetFilter
+        pvApplyFilter
     End If
     If m_rsStats Is Nothing Then
         Set m_rsStats = CreateRecordset( _
@@ -577,6 +614,10 @@ End Function
 
 Private Sub pvRefreshList(ByVal bRefreshData As Boolean, ByVal bRefreshStats As Boolean)
     lvwMain.Redraw = False
+    '--- rows added or changed since the list was prepared are matched again
+    If Not m_oFilter Is Nothing Then
+        pvApplyFilter
+    End If
     If lvwMain.RowCount <> m_rsListSort.RecordCount Then
         m_bInSet = True
         lvwMain.RowCount = m_rsListSort.RecordCount
@@ -980,6 +1021,8 @@ Private Sub pvShowServers(Optional Selected As String)
             End If
         End If
     Next
+    '--- by name here, the connect dialog keeps the last used first
+    tvwServers.SortChildren hRoot
 End Sub
 
 Private Function pvContainsText(cItems As Collection, sText As String) As Boolean
@@ -1246,16 +1289,15 @@ Private Sub mnuFile_Click(Index As Integer)
     Case ucsMnuFileConnect
         pvConnect
     Case ucsMnuFileFilter
-        sFilter = InputBox("Server, program, database, host, login, status or command (use * for wildcards)", "Filter", m_sFilter)
+        sFilter = InputBox("Server, program, database, host, login, status or command. Use * for wildcards, " & _
+            "AND, OR, NOT and brackets to combine, quotes for text with keywords", "Filter", m_sFilter)
         If StrPtr(sFilter) <> 0 Then
-            If LenB(sFilter) <> 0 And InStr(sFilter, "*") = 0 And InStr(sFilter, "_") = 0 Then
-                m_sFilter = "*" & sFilter & "*"
-            Else
-                m_sFilter = sFilter
+            If Not pvSetFilter(sFilter) Then
+                Exit Sub
             End If
             pvSetCaption Me
             If Not m_rsListSort Is Nothing Then
-                m_rsListSort.Filter = pvGetFilter
+                pvApplyFilter
                 lvwMain.RowCount = m_rsListSort.RecordCount
                 pvRefreshUI
             End If
@@ -1412,7 +1454,9 @@ Private Sub Form_Load()
     Caption = STR_APP_NAME
     App.Title = STR_APP_NAME
     WindowState = GetSetting(STR_APP_NAME, STR_REG_COMMON, "WindowState", vbNormal)
-    m_sFilter = GetSetting(STR_APP_NAME, STR_REG_COMMON, "Filter", vbNullString)
+    If Not pvSetFilter(GetSetting(STR_APP_NAME, STR_REG_COMMON, "Filter", vbNullString)) Then
+        pvSetFilter vbNullString
+    End If
     m_dblRatio = Limit(C_Dbl(GetSetting(STR_APP_NAME, STR_REG_COMMON, "Ratio", 0.75)), 0.05, 0.95)
     m_dblTreeWidth = Limit(C_Dbl(GetSetting(STR_APP_NAME, STR_REG_COMMON, "TreeWidth", DBL_TREE_WIDTH)), DBL_TREE_MIN_WIDTH, Screen.Width / 2)
     pvInitColumns

@@ -243,6 +243,13 @@ Public Sub EnsureVisible(ByVal hItem As LongPtr)
     End If
 End Sub
 
+'--- orders the direct children by text, case-insensitive
+Public Sub SortChildren(ByVal hItem As LongPtr)
+    If m_hTree <> 0 And hItem <> 0 Then
+        Call SendMessage(m_hTree, TVM_SORTCHILDREN, 0, ByVal hItem)
+    End If
+End Sub
+
 '--- the node under a point in pixels, or zero where there is none
 Public Function HitTest(ByVal lX As Long, ByVal lY As Long) As LongPtr
     Dim uHit            As TVHITTESTINFO

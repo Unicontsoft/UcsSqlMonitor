@@ -10,6 +10,7 @@ Module=mdModernSubclassing; ..\src\mdModernSubclassing.bas
 Module=mdIPAO; ..\src\mdIPAO.bas
 Class=cExtEvents; ..\src\cExtEvents.cls
 Class=cServerMonitor; ..\src\cServerMonitor.cls
+Class=cRowFilter; ..\src\cRowFilter.cls
 UserControl=..\src\ctxListView.ctl
 UserControl=..\src\ctxTreeView.ctl
 ResFile32="..\res\UcsSqlMonitor.res"

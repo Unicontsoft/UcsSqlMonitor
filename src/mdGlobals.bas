@@ -177,6 +177,7 @@ Public Const TVM_SELECTITEM                 As Long = &H110B
 Public Const TVM_GETITEM                    As Long = &H110C
 Public Const TVM_SETITEM                    As Long = &H110D
 Public Const TVM_HITTEST                    As Long = &H1111
+Public Const TVM_SORTCHILDREN               As Long = &H1113
 Public Const TVM_ENSUREVISIBLE              As Long = &H1114
 Public Const TVM_SETEXTENDEDSTYLE           As Long = &H112C
 Public Const TVM_INSERTITEMW                As Long = &H1132
