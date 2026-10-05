@@ -9,5 +9,4 @@
 *.ocx
 *.exe
 **/_del/*
-bin/*
 compile/
