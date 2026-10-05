@@ -2,7 +2,7 @@ VERSION 5.00
 Begin VB.Form frmConnect 
    BorderStyle     =   3  'Fixed Dialog
    Caption         =   "Connect"
-   ClientHeight    =   4272
+   ClientHeight    =   4608
    ClientLeft      =   36
    ClientTop       =   336
    ClientWidth     =   4548
@@ -10,7 +10,7 @@ Begin VB.Form frmConnect
    LinkTopic       =   "frmConnect"
    MaxButton       =   0   'False
    MinButton       =   0   'False
-   ScaleHeight     =   4272
+   ScaleHeight     =   4608
    ScaleWidth      =   4548
    StartUpPosition =   2  'CenterScreen
    Begin VB.CheckBox chkSystemProcesses 
@@ -19,6 +19,14 @@ Begin VB.Form frmConnect
       Left            =   588
       TabIndex        =   7
       Top             =   3192
+      Width           =   3876
+   End
+   Begin VB.CheckBox chkEncrypt
+      Caption         =   "Encrypt connection"
+      Height          =   264
+      Left            =   588
+      TabIndex        =   8
+      Top             =   3528
       Width           =   3876
    End
    Begin VB.ComboBox cobServer 
@@ -58,8 +66,8 @@ Begin VB.Form frmConnect
       Caption         =   "Cancel"
       Height          =   348
       Left            =   3108
-      TabIndex        =   9
-      Top             =   3696
+      TabIndex        =   10
+      Top             =   4032
       Width           =   1272
    End
    Begin VB.CommandButton Command1 
@@ -67,8 +75,8 @@ Begin VB.Form frmConnect
       Default         =   -1  'True
       Height          =   348
       Left            =   1764
-      TabIndex        =   8
-      Top             =   3696
+      TabIndex        =   9
+      Top             =   4032
       Width           =   1272
    End
    Begin VB.TextBox txtDB 
@@ -98,7 +106,7 @@ Begin VB.Form frmConnect
       Caption         =   "Refresh rate:"
       Height          =   264
       Left            =   588
-      TabIndex        =   15
+      TabIndex        =   16
       Top             =   2772
       Width           =   1104
    End
@@ -106,7 +114,7 @@ Begin VB.Form frmConnect
       Caption         =   "Type:"
       Height          =   264
       Left            =   588
-      TabIndex        =   14
+      TabIndex        =   15
       Top             =   1932
       Width           =   1104
    End
@@ -114,7 +122,7 @@ Begin VB.Form frmConnect
       Caption         =   "SQL Server:"
       Height          =   264
       Left            =   588
-      TabIndex        =   13
+      TabIndex        =   14
       Top             =   168
       Width           =   1104
    End
@@ -122,7 +130,7 @@ Begin VB.Form frmConnect
       Caption         =   "SQL DB:"
       Height          =   264
       Left            =   588
-      TabIndex        =   12
+      TabIndex        =   13
       Top             =   588
       Width           =   1104
    End
@@ -130,7 +138,7 @@ Begin VB.Form frmConnect
       Caption         =   "User:"
       Height          =   264
       Left            =   588
-      TabIndex        =   11
+      TabIndex        =   12
       Top             =   1008
       Width           =   1104
    End
@@ -138,7 +146,7 @@ Begin VB.Form frmConnect
       Caption         =   "Pass:"
       Height          =   264
       Left            =   588
-      TabIndex        =   10
+      TabIndex        =   11
       Top             =   1428
       Width           =   1104
    End
@@ -167,6 +175,7 @@ Private m_eMode             As UcsMonitorMode
 Private m_oCmd              As ADODB.Command
 Private m_lRefreshRate      As Long
 Private m_cProfiles         As Collection
+Private m_sConnectString    As String
 
 '=========================================================================
 ' Error handling
@@ -190,26 +199,28 @@ Private Property Get pvContents() As String
         -optExtEvents.Value, _
         -optSpWho2.Value, _
         cobRerfesh.ListIndex, _
-        chkSystemProcesses.Value), STR_DELIM)
+        chkSystemProcesses.Value, _
+        chkEncrypt.Value), STR_DELIM)
 End Property
 
 Private Property Let pvContents(sValue As String)
     Dim vSplit          As Variant
-    
+    Dim lIdx            As Long
+
     vSplit = Split(sValue, STR_DELIM)
-    On Error Resume Next
-    cobServer.Text = vSplit(0)
-    txtDB.Text = vSplit(1)
-    txtUser.Text = vSplit(2)
-    txtPass.Text = vSplit(3)
-    optExtEvents.Value = vSplit(4)
-    optSpWho2.Value = vSplit(5)
-    cobRerfesh.ListIndex = -1
-    cobRerfesh.ListIndex = vSplit(6)
-    chkSystemProcesses.Value = vSplit(7)
-    If cobRerfesh.ListIndex < 0 Then
-        cobRerfesh.ListIndex = 4
+    cobServer.Text = At(vSplit, 0)
+    txtDB.Text = At(vSplit, 1)
+    txtUser.Text = At(vSplit, 2)
+    txtPass.Text = At(vSplit, 3)
+    optExtEvents.Value = C_Bool(At(vSplit, 4))
+    optSpWho2.Value = C_Bool(At(vSplit, 5))
+    lIdx = C_Lng(At(vSplit, 6, "4"))
+    If lIdx < 0 Or lIdx >= cobRerfesh.ListCount Then
+        lIdx = 4
     End If
+    cobRerfesh.ListIndex = lIdx
+    chkSystemProcesses.Value = C_Lng(At(vSplit, 7))
+    chkEncrypt.Value = C_Lng(At(vSplit, 8))
     '--- profiles saved with sp_whoisactive have neither option set
     If Not optSpWho2.Value Then
         optExtEvents.Value = True
@@ -258,7 +269,7 @@ Friend Function frInit( _
             eMode As UcsMonitorMode, _
             lRefreshRate As Long, _
             bSystemProcesses As Boolean, _
-            sPassword As String) As Boolean
+            sConnectString As String) As Boolean
     Const FUNC_NAME     As String = "frInit"
     Dim vElem           As Variant
     Dim lIdx            As Long
@@ -304,7 +315,7 @@ Friend Function frInit( _
         eMode = m_eMode
         lRefreshRate = m_lRefreshRate
         bSystemProcesses = (chkSystemProcesses.Value = vbChecked)
-        sPassword = txtPass.Text
+        sConnectString = m_sConnectString
         '--- success
         frInit = True
     End If
@@ -316,8 +327,52 @@ EH:
 End Function
 
 Private Function pvGetServer(sProfile As String) As String
-    On Error Resume Next
-    pvGetServer = Split(sProfile, STR_DELIM)(0)
+    pvGetServer = At(Split(sProfile, STR_DELIM), 0)
+End Function
+
+'--- newest installed "ODBC Driver NN for SQL Server", empty when there is none
+Private Function pvGetOdbcDriver() As String
+    Const STR_PREFIX    As String = "ODBC Driver "
+    Const STR_SUFFIX    As String = " for SQL Server"
+    Dim sBuffer         As String
+    Dim nSize           As Integer
+    Dim vElem           As Variant
+    Dim lVersion        As Long
+    Dim lBest           As Long
+
+    sBuffer = String$(8192, 0)
+    If SQLGetInstalledDrivers(StrPtr(sBuffer), Len(sBuffer), nSize) = 0 Then
+        Exit Function
+    End If
+    For Each vElem In Split(Left$(sBuffer, nSize), vbNullChar)
+        If Left$(vElem, Len(STR_PREFIX)) = STR_PREFIX And Right$(vElem, Len(STR_SUFFIX)) = STR_SUFFIX Then
+            lVersion = C_Lng(Mid$(vElem, Len(STR_PREFIX) + 1, Len(vElem) - Len(STR_PREFIX) - Len(STR_SUFFIX)))
+            If lVersion > lBest Then
+                lBest = lVersion
+                pvGetOdbcDriver = vElem
+            End If
+        End If
+    Next
+End Function
+
+Private Function pvGetConnectString(sDriver As String) As String
+    Dim bEncrypt        As Boolean
+
+    bEncrypt = (chkEncrypt.Value = vbChecked)
+    If LenB(sDriver) <> 0 Then
+        '--- ODBC values in braces so ; in a password does not end it
+        pvGetConnectString = "Provider=MSDASQL;Driver={" & sDriver & "};Server=" & cobServer.Text & ";" & _
+            IIf(LenB(txtDB.Text) <> 0, "Database=" & txtDB.Text & ";", vbNullString) & _
+            IIf(LenB(txtUser.Text) <> 0, "UID={" & Replace(txtUser.Text, "}", "}}") & "};PWD={" & Replace(txtPass.Text, "}", "}}") & "};", "Trusted_Connection=Yes;") & _
+            IIf(bEncrypt, "Encrypt=Yes;TrustServerCertificate=Yes;", "Encrypt=No;") & _
+            "APP=" & App.Title
+    Else
+        pvGetConnectString = "Provider=SQLOLEDB;Data Source=" & cobServer.Text & ";" & _
+            IIf(LenB(txtDB.Text) <> 0, "Initial catalog=" & txtDB.Text & ";", vbNullString) & _
+            IIf(LenB(txtUser.Text) <> 0, "User ID=" & txtUser.Text & ";Password=" & txtPass.Text & ";", "Integrated security=SSPI;") & _
+            IIf(bEncrypt, "Use Encryption for Data=True;", vbNullString) & _
+            "Application Name=" & App.Title
+    End If
 End Function
 
 '=========================================================================
@@ -340,12 +395,18 @@ End Sub
 Private Sub Command1_Click()
     Const MIN_VERSION_EXT_EVENTS As Long = 15
     Dim oConn           As ADODB.Connection
+    Dim sDriver         As String
 
     On Error GoTo EH
     pvDisabled = True
     Set oConn = New Connection
     oConn.ConnectionTimeout = 5
-    oConn.Open "Provider=SQLOLEDB;Data Source=" & cobServer.Text & ";" & IIf(LenB(txtDB) <> 0, "Initial catalog=" & txtDB & ";", "") & IIf(LenB(txtUser) <> 0, "User ID=" & txtUser & ";Password=" & txtPass & ";", "Integrated security=SSPI;") & "Application Name=" & App.Title
+    '--- ODBC drivers cannot talk to SQL 2000 so sp_who2 mode keeps SQLOLEDB
+    If optExtEvents.Value Then
+        sDriver = pvGetOdbcDriver()
+    End If
+    m_sConnectString = pvGetConnectString(sDriver)
+    oConn.Open m_sConnectString
     Set m_oCmd = New ADODB.Command
     Set m_oCmd.ActiveConnection = oConn
     m_oCmd.CommandTimeout = 5
@@ -354,7 +415,6 @@ Private Sub Command1_Click()
             MsgBox "Extended Events mode needs SQL Server 2019 or later. Use sp_who2 for this server.", vbExclamation
             GoTo QH
         End If
-        '--- TODO: create/start shared UcsSqlMonitor event session and build the session list query
         m_eMode = ucsMonExtEvents
     Else
         m_oCmd.CommandText = "exec sp_who2"

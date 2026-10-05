@@ -8,6 +8,7 @@ Module=mdGlobals; mdGlobals.bas
 Form=frmStats.frm
 Module=mdModernSubclassing; mdModernSubclassing.bas
 Module=mdIPAO; mdIPAO.bas
+Class=cExtEvents; cExtEvents.cls
 UserControl=ctxListView.ctl
 ResFile32="UcsSqlMonitor.res"
 IconForm="frmMain"

@@ -129,7 +129,10 @@ Private Const MODULE_NAME As String = "frmMain"
 Private Const STR_REG_COMMON        As String = "Common"
 Private Const CLR_ACTIVE            As Long = &H80FF00
 Private Const ERR_NO_MORE_RESULTS   As Long = &H40EC9
+Private Const ERR_SQL_DB_CHANGED    As Long = 5701
+Private Const ERR_SQL_LANG_CHANGED  As Long = 5703
 Private Const MSG_CONTINUE          As String = "Do you want to continue?"
+Private Const LNG_HISTORY_SIZE      As Long = 32000
 
 Private m_oCmd              As ADODB.Command
 Private WithEvents m_oConn  As ADODB.Connection
@@ -140,6 +143,7 @@ Private m_rsList            As Recordset
 Private m_cList             As Collection
 Private m_rsListSort        As Recordset
 Private m_eMode             As UcsMonitorMode
+Private m_oExtEvents        As cExtEvents
 Private m_sServer           As String
 Private m_sFilter           As String
 Private m_bDown             As Boolean
@@ -154,7 +158,7 @@ Attribute m_oFrmStats.VB_VarHelpID = -1
 Private m_cSelected         As Collection
 Private m_bInSet            As Boolean
 Private m_bDelayFetch       As Boolean
-Private m_sPassword         As String
+Private m_sConnectString    As String
 Private m_aColumns()        As UcsColumnInfo
 
 Private Type UcsColumnInfo
@@ -303,7 +307,6 @@ End Function
 
 Private Sub pvShowResults(rs As Recordset)
     Const FUNC_NAME     As String = "pvShowResults"
-    Dim sSort           As String
     Dim bRefreshData    As Boolean
     Dim lIter           As Long
     Dim lIdx            As Long
@@ -321,50 +324,12 @@ Private Sub pvShowResults(rs As Recordset)
     If rs.State <> adStateOpen Then
         Exit Sub
     End If
-    '--- create list
-    If m_rsList Is Nothing Then
-        Set m_rsList = CreateRecordset( _
-            "SPID", adDouble, _
-            "Status", adVarWChar, 30, _
-            "Login", adVarWChar, 128, _
-            "Host", adVarWChar, 128, _
-            "Blk", adVarWChar, 10, _
-            "DB", adVarWChar, 128, _
-            "Command", adVarWChar, 128, _
-            "CPU", adInteger, _
-            "Dsk", adInteger, _
-            "Last_Batch", adVarWChar, 128, _
-            "Program", adVarWChar, 120, _
-            "SP2", adInteger, _
-            "Wait", adVarWChar, 64, _
-            "Trans", adInteger, _
-            "Input_Buffer2", adBSTR, _
-            "IsActive", adBoolean, _
-            "LastActive", adBoolean)
-        Set m_rsListSort = m_rsList.Clone
-        m_rsListSort.Sort = "DB, Login, Host, SPID"
-        m_rsListSort.Filter = pvGetFilter
-    Else
-        sSort = m_rsListSort.Sort
-        With New PropertyBag
-            .WriteProperty "rs", m_rsList
-            Set m_rsList = .ReadProperty("rs")
-        End With
-        Set m_rsListSort = m_rsList.Clone
-        m_rsListSort.Sort = sSort
-        m_rsListSort.Filter = pvGetFilter
-        Debug.Print "After sort", Timer
+    If m_eMode = ucsMonExtEvents Then
+        pvShowExtEvents rs
+        Exit Sub
     End If
-    If m_rsStats Is Nothing Then
-        Set m_rsStats = CreateRecordset( _
-            "Host", adVarWChar, 128, _
-            "Login", adVarWChar, 128, _
-            "DB", adVarWChar, 128, _
-            "SPID", adDouble, _
-            "Opers", adInteger)
-        Set m_cStats = InitIndexCollection(m_rsStats, "Host", "Login", "DB")
-    End If
-    Debug.Print "Before sync rs", Timer
+    pvPrepareList
+    Debug.Print "Before sync rs", TimerEx
     '--- sync rs, sp_who2 columns map to list fields by position up to REQUESTID
     Set m_cList = InitIndexCollection(m_rsList, "SPID")
     Do While MoveRecordset(rs, lIter)
@@ -403,7 +368,7 @@ Private Sub pvShowResults(rs As Recordset)
             lIdx = lIdx + 1
         Next
     Loop
-    Debug.Print "Before m_rsList", Timer
+    Debug.Print "Before m_rsList", TimerEx
     If m_rsList.RecordCount <> 0 Then
         Set cResult = InitIndexCollection(rs, "SPID")
         lIter = 0
@@ -446,6 +411,65 @@ Private Sub pvShowResults(rs As Recordset)
 LoopNext:
         Loop
     End If
+    pvRefreshList bRefreshData, bRefreshStats
+    Exit Sub
+EH:
+    If MsgBox(Error & vbCrLf & vbCrLf & MSG_CONTINUE, vbQuestion Or vbYesNo, MODULE_NAME & "." & FUNC_NAME & "(" & Erl & ")") = vbYes Then
+        Exit Sub
+        Resume
+    End If
+    tmrFetch.Enabled = False
+End Sub
+
+Private Sub pvPrepareList()
+    Dim sSort           As String
+
+    If m_rsList Is Nothing Then
+        Set m_rsList = CreateRecordset( _
+            "SPID", adDouble, _
+            "Status", adVarWChar, 30, _
+            "Login", adVarWChar, 128, _
+            "Host", adVarWChar, 128, _
+            "Blk", adVarWChar, 10, _
+            "DB", adVarWChar, 128, _
+            "Command", adVarWChar, 128, _
+            "CPU", adInteger, _
+            "Dsk", adInteger, _
+            "Last_Batch", adVarWChar, 128, _
+            "Program", adVarWChar, 120, _
+            "SP2", adInteger, _
+            "Wait", adVarWChar, 64, _
+            "Trans", adInteger, _
+            "Input_Buffer2", adBSTR, _
+            "IsActive", adBoolean, _
+            "LastActive", adBoolean, _
+            "LoginTime", adDate)
+        Set m_rsListSort = m_rsList.Clone
+        m_rsListSort.Sort = "DB, Login, Host, SPID"
+        m_rsListSort.Filter = pvGetFilter
+    Else
+        sSort = m_rsListSort.Sort
+        With New PropertyBag
+            .WriteProperty "rs", m_rsList
+            Set m_rsList = .ReadProperty("rs")
+        End With
+        Set m_rsListSort = m_rsList.Clone
+        m_rsListSort.Sort = sSort
+        m_rsListSort.Filter = pvGetFilter
+        Debug.Print "After sort", TimerEx
+    End If
+    If m_rsStats Is Nothing Then
+        Set m_rsStats = CreateRecordset( _
+            "Host", adVarWChar, 128, _
+            "Login", adVarWChar, 128, _
+            "DB", adVarWChar, 128, _
+            "SPID", adDouble, _
+            "Opers", adInteger)
+        Set m_cStats = InitIndexCollection(m_rsStats, "Host", "Login", "DB")
+    End If
+End Sub
+
+Private Sub pvRefreshList(ByVal bRefreshData As Boolean, ByVal bRefreshStats As Boolean)
     lvwMain.Redraw = False
     If lvwMain.RowCount <> m_rsListSort.RecordCount Then
         m_bInSet = True
@@ -461,13 +485,183 @@ LoopNext:
     If bRefreshStats And Not m_oFrmStats Is Nothing Then
         m_oFrmStats.frRefresh m_rsStats
     End If
+End Sub
+
+Private Sub pvShowExtEvents(rs As Recordset)
+    Const FUNC_NAME     As String = "pvShowExtEvents"
+    Dim bFull           As Boolean
+    Dim lLost           As Long
+    Dim rsSnap          As Recordset
+    Dim lIter           As Long
+    Dim sKey            As String
+    Dim bRefreshData    As Boolean
+    Dim cSeen           As Collection
+    Dim vField          As Variant
+    Dim rsLive          As Recordset
+    Dim cLive           As Collection
+    Dim rsEvents        As Recordset
+    Dim cActive         As Collection
+    Dim bIsActive       As Boolean
+    Dim bRefreshStats   As Boolean
+
+    On Error GoTo EH
+    If Not m_oExtEvents.frReadInfo(rs, bFull, lLost) Then
+        Exit Sub
+    End If
+    pvPrepareList
+    Set m_cList = InitIndexCollection(m_rsList, "SPID")
+    '--- 2. sessions snapshot, only a full one has every SPID so missing ones are gone
+    Set rsSnap = rs.NextRecordset
+    Set cSeen = New Collection
+    Do While MoveRecordset(rsSnap, lIter)
+        sKey = "#" & rsSnap!SPID.Value
+        If Not SetBookmark(m_rsList, m_cList, sKey) Then
+            m_rsList.AddNew
+            m_rsList!SPID.Value = rsSnap!SPID.Value
+            m_rsList!IsActive.Value = False
+            m_rsList!LastActive.Value = False
+            RemoveCollection m_cList, sKey
+            m_cList.Add m_rsList.Bookmark, sKey
+            bRefreshData = True
+        ElseIf C_Str(m_rsList!LoginTime.Value) <> C_Str(rsSnap!LoginTime.Value) Then
+            '--- same SPID reused by a new session
+            m_rsList!Input_Buffer2.Value = Null
+            bRefreshData = True
+        End If
+        For Each vField In Array("Status", "Login", "Host", "DB", "Program", "CPU", "Dsk", "Last_Batch", "LoginTime")
+            If pvSetValue(m_rsList.Fields(vField), rsSnap.Fields(vField).Value) Then
+                bRefreshData = True
+            End If
+        Next
+        RemoveCollection cSeen, sKey
+        cSeen.Add True, sKey
+    Loop
+    '--- 3. live requests and open transactions
+    Set rsLive = rs.NextRecordset
+    Set cLive = InitIndexCollection(rsLive, "SPID")
+    '--- 4. new events go to the history of their session
+    Set rsEvents = rs.NextRecordset
+    Set cActive = New Collection
+    lIter = 0
+    Do While MoveRecordset(rsEvents, lIter)
+        sKey = "#" & rsEvents!SPID.Value
+        If SetBookmark(m_rsList, m_cList, sKey) Then
+            m_rsList!Input_Buffer2.Value = Right$(C_Str(m_rsList!Input_Buffer2.Value) & m_oExtEvents.FormatEvent(rsEvents), LNG_HISTORY_SIZE)
+            RemoveCollection cActive, sKey
+            cActive.Add True, sKey
+            bRefreshData = True
+        End If
+    Loop
+    lIter = 0
+    Do While MoveRecordset(m_rsList, lIter)
+        sKey = "#" & m_rsList!SPID.Value
+        If bFull And Not SearchCollection(cSeen, sKey) Then
+            RemoveCollection m_cList, sKey
+            m_rsList.Delete
+            bRefreshData = True
+        Else
+            If SetBookmark(rsLive, cLive, sKey) Then
+                For Each vField In Array("Status", "Command", "Blk", "Wait", "Trans", "DB")
+                    If pvSetValue(m_rsList.Fields(vField), rsLive.Fields(vField).Value) Then
+                        bRefreshData = True
+                    End If
+                Next
+            Else
+                '--- no request so the session is idle
+                For Each vField In Array("Command", "Blk", "Wait", "Trans")
+                    If pvSetValue(m_rsList.Fields(vField), Null) Then
+                        bRefreshData = True
+                    End If
+                Next
+                Select Case LCase$(C_Str(m_rsList!Status.Value))
+                Case "running", "runnable", "suspended"
+                    m_rsList!Status.Value = "sleeping"
+                    bRefreshData = True
+                End Select
+            End If
+            bIsActive = SearchCollection(cActive, sKey)
+            If bIsActive And lLost > 0 Then
+                m_rsList!Input_Buffer2.Value = Right$(C_Str(m_rsList!Input_Buffer2.Value) & "-- " & lLost & " events lost" & vbCrLf, LNG_HISTORY_SIZE)
+            End If
+            Select Case LCase$(C_Str(m_rsList!Status.Value))
+            Case "running", "runnable"
+                bIsActive = True
+            End Select
+            If C_Lng(m_rsList!Trans.Value) > 0 Then
+                bIsActive = True
+            End If
+            If m_rsList!IsActive.Value <> bIsActive Then
+                m_rsList!IsActive.Value = bIsActive
+                bRefreshData = True
+            End If
+            If pvUpdateStats() Then
+                bRefreshStats = True
+            End If
+        End If
+    Loop
+    pvRefreshList bRefreshData, bRefreshStats
     Exit Sub
 EH:
-    If MsgBox(Error & vbCrLf & vbCrLf & MSG_CONTINUE, vbQuestion Or vbYesNo, MODULE_NAME & "." & FUNC_NAME & "(" & Erl & ")") = vbYes Then
-        Exit Sub
-        Resume
+    PrintError FUNC_NAME
+    Resume Next
+End Sub
+
+Private Function pvSetValue(oFld As ADODB.Field, vValue As Variant) As Boolean
+    If C_Str(oFld.Value) <> C_Str(vValue) Or IsNull(oFld.Value) <> IsNull(vValue) Then
+        oFld.Value = vValue
+        pvSetValue = True
     End If
-    tmrFetch.Enabled = False
+End Function
+
+Private Function pvUpdateStats() As Boolean
+    Dim sKey            As String
+
+    sKey = C_Str(m_rsList!Host.Value) & "#" & C_Str(m_rsList!Login.Value) & "#" & C_Str(m_rsList!DB.Value)
+    If Not SetBookmark(m_rsStats, m_cStats, sKey) Then
+        m_rsStats.AddNew Array("Host", "Login", "DB", "SPID", "Opers"), Array(C_Str(m_rsList!Host.Value), C_Str(m_rsList!Login.Value), C_Str(m_rsList!DB.Value), m_rsList!SPID.Value, 0)
+        m_cStats.Add m_rsStats.Bookmark, sKey
+    End If
+    If m_rsList!IsActive.Value And Not m_rsList!LastActive.Value Then
+        m_rsStats!SPID.Value = m_rsList!SPID.Value
+        m_rsStats!Opers.Value = m_rsStats!Opers.Value + 1
+        pvUpdateStats = True
+    End If
+    m_rsList!LastActive.Value = m_rsList!IsActive.Value
+End Function
+
+Private Function pvInitExtEvents() As Boolean
+    On Error GoTo EH
+    Set m_oExtEvents = New cExtEvents
+    m_oExtEvents.Init m_oConn
+    pvInitExtEvents = True
+    Exit Function
+EH:
+    MsgBox "Cannot start Extended Events session: " & Error, vbExclamation
+    Set m_oExtEvents = Nothing
+End Function
+
+Private Sub pvShutdownExtEvents()
+    If Not m_oExtEvents Is Nothing Then
+        '--- an open result keeps the connection busy and ODBC would run the shutdown on a hidden connection
+        pvCloseResult
+        m_oExtEvents.Shutdown
+        Set m_oExtEvents = Nothing
+    End If
+End Sub
+
+Private Sub pvCloseResult()
+    On Error GoTo QH
+    If m_rsResult Is Nothing Then
+        Exit Sub
+    End If
+    If (m_rsResult.State And (adStateExecuting Or adStateFetching)) <> 0 Then
+        m_rsResult.Cancel
+    End If
+    If (m_rsResult.State And adStateOpen) <> 0 Then
+        m_rsResult.Close
+    End If
+QH:
+    Set m_rsResult = Nothing
 End Sub
 
 Private Sub pvSetCaption(oForm As VB.Form)
@@ -483,10 +677,13 @@ Private Function pvMoveToRow(ByVal lRow As Long) As Boolean
         Exit Function
     End If
     If m_rsListSort.AbsolutePosition = lRow Then
-        pvMoveToRow = True
-    Else
-        pvMoveToRow = SetAbsolutePosition(m_rsListSort, lRow)
+        '--- the current record may have been deleted since the last paint
+        If (m_rsListSort.Status And adRecDeleted) = 0 Then
+            pvMoveToRow = True
+            Exit Function
+        End If
     End If
+    pvMoveToRow = SetAbsolutePosition(m_rsListSort, lRow)
 End Function
 
 Private Sub pvInitColumns()
@@ -529,13 +726,12 @@ Private Sub pvTestConn()
         End If
     End If
     If m_oConn.State = adStateClosed Then
-        m_oConn.Open m_oConn.ConnectionString, , m_sPassword
+        m_oConn.Open m_sConnectString
         Set m_oCmd.ActiveConnection = m_oConn
+        If Not m_oExtEvents Is Nothing Then
+            m_oExtEvents.Init m_oConn
+        End If
     End If
-End Sub
-
-Private Sub pvFetchExtEvents()
-    '--- TODO: read new UcsSqlMonitor events and live requests, resync list on dropped_event_count change
 End Sub
 
 '=========================================================================
@@ -669,14 +865,14 @@ EH:
 End Sub
 
 Private Sub m_oConn_Disconnect(adStatus As ADODB.EventStatusEnum, ByVal pConnection As ADODB.Connection)
-    Debug.Print "m_oConn_Disconnect adStatus="; adStatus, Timer
+    Debug.Print "m_oConn_Disconnect adStatus="; adStatus, TimerEx
 End Sub
 
 Private Sub m_oConn_ExecuteComplete(ByVal RecordsAffected As Long, ByVal pError As ADODB.Error, adStatus As ADODB.EventStatusEnum, ByVal pCommand As ADODB.Command, ByVal pRecordset As ADODB.Recordset, ByVal pConnection As ADODB.Connection)
     Const FUNC_NAME     As String = "m_oConn_ExecuteComplete"
     
     On Error GoTo EH
-    Debug.Print "m_oConn_ExecuteComplete m_bDelayFetch="; m_bDelayFetch, Timer
+    Debug.Print "m_oConn_ExecuteComplete m_bDelayFetch="; m_bDelayFetch, TimerEx
     If m_bDelayFetch Then
         tmrFetch.Enabled = False
         tmrFetch.Enabled = True
@@ -691,6 +887,11 @@ Private Sub m_oConn_InfoMessage(ByVal pError As ADODB.Error, adStatus As ADODB.E
     Const FUNC_NAME     As String = "m_oConn_InfoMessage"
     
     On Error GoTo EH
+    '--- ODBC passes on the login's changed database/language notices
+    Select Case pError.NativeError
+    Case ERR_SQL_DB_CHANGED, ERR_SQL_LANG_CHANGED
+        Exit Sub
+    End Select
     If pError.Number <> ERR_NO_MORE_RESULTS Then
         If MsgBox(pError & vbCrLf & vbCrLf & MSG_CONTINUE, vbQuestion Or vbYesNo, MODULE_NAME & "." & FUNC_NAME & "(" & Erl & ")") = vbNo Then
             Exit Sub
@@ -717,7 +918,7 @@ Private Sub m_rsResult_FetchComplete(ByVal pError As ADODB.Error, adStatus As AD
     Dim bTimerDelayed   As Boolean
     
     On Error GoTo EH
-    dblTimer = Timer
+    dblTimer = TimerEx
     If Not pError Is Nothing Then
         Debug.Print "pError.Description=" & pError.Description
         Exit Sub
@@ -729,7 +930,7 @@ Private Sub m_rsResult_FetchComplete(ByVal pError As ADODB.Error, adStatus As AD
     If bTimerDelayed Then
         tmrFetch_Timer
     End If
-    Debug.Print "m_rsResult_FetchComplete, Elapsed=" & Format$(Timer - dblTimer, "0.000"), Timer
+    Debug.Print "m_rsResult_FetchComplete, Elapsed=" & Format$(TimerEx - dblTimer, "0.000"), TimerEx
     Exit Sub
 EH:
     PrintError FUNC_NAME
@@ -748,9 +949,18 @@ Private Sub mnuFile_Click(Index As Integer)
         tmrFetch.Enabled = False
         m_bDelayFetch = False
         Set m_rsResult = Nothing
+        pvShutdownExtEvents
         Set m_oConn = Nothing
-        If oFrmConnect.frInit(m_oCmd, m_eMode, lRefreshRate, m_bSystemProcesses, m_sPassword) Then
+        If oFrmConnect.frInit(m_oCmd, m_eMode, lRefreshRate, m_bSystemProcesses, m_sConnectString) Then
             Set m_oConn = m_oCmd.ActiveConnection
+            If m_eMode = ucsMonExtEvents Then
+                If Not pvInitExtEvents() Then
+                    Set m_oConn = Nothing
+                    Caption = STR_APP_NAME
+                    lvwMain.RowCount = 0
+                    Exit Sub
+                End If
+            End If
             With m_oConn.Execute("SELECT srvnetname FROM sysservers WHERE srvid = 0")
                 If Not .EOF Then
                     m_sServer = Trim$(.Fields(0).Value)
@@ -793,6 +1003,7 @@ Private Sub mnuFile_Click(Index As Integer)
     Case ucsMnuFileExit
         tmrFetch.Enabled = False
         Set m_rsResult = Nothing
+        pvShutdownExtEvents
         Set m_oConn = Nothing
         Unload Me
     End Select
@@ -872,12 +1083,9 @@ End Sub
 Private Sub tmrFetch_Timer()
     Const FUNC_NAME     As String = "tmrFetch_Timer"
     Dim lState          As Long
-  
+    Dim oCmd            As ADODB.Command
+
     On Error GoTo EH
-    If m_eMode = ucsMonExtEvents Then
-        pvFetchExtEvents
-        Exit Sub
-    End If
     If m_rsResult Is Nothing Then
         Set m_rsResult = New Recordset
         m_rsResult.CursorLocation = adUseClient
@@ -885,7 +1093,7 @@ Private Sub tmrFetch_Timer()
     On Error Resume Next
     lState = m_rsResult.State
     If Err.Number <> 0 Then
-        Debug.Print "tmrFetch_Timer Error="; Error, Timer
+        Debug.Print "tmrFetch_Timer Error="; Error, TimerEx
         pvTestConn
     End If
     On Error GoTo EH
@@ -896,10 +1104,15 @@ Private Sub tmrFetch_Timer()
     If lState = adStateOpen Then
         m_rsResult.Close
     End If
+    If m_eMode = ucsMonExtEvents Then
+        Set oCmd = m_oExtEvents.FetchCommand(m_bSystemProcesses)
+    Else
+        Set oCmd = m_oCmd
+    End If
     On Error Resume Next
-    m_rsResult.Open m_oCmd, , adOpenStatic, adLockBatchOptimistic, adAsyncExecute Or adAsyncFetch
+    m_rsResult.Open oCmd, , adOpenStatic, adLockBatchOptimistic, adAsyncExecute Or adAsyncFetch
     If Err.Number <> 0 Then
-        Debug.Print "tmrFetch_Timer Error="; Error, Timer
+        Debug.Print "tmrFetch_Timer Error="; Error, TimerEx
         pvTestConn
     End If
     On Error GoTo EH
@@ -938,6 +1151,7 @@ Private Sub Form_Unload(Cancel As Integer)
     
     On Error GoTo EH
     tmrFetch.Enabled = False
+    pvShutdownExtEvents
     If WindowState <> vbMinimized Then
         Call SaveSetting(STR_APP_NAME, STR_REG_COMMON, "WindowState", WindowState)
     Else

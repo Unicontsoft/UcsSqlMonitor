@@ -162,6 +162,9 @@ Public Declare Function GetKeyState Lib "user32" (ByVal nVirtKey As Long) As Int
 Public Declare Function UpdateWindow Lib "user32" (ByVal hWnd As LongPtr) As Long
 Public Declare Function CreateSolidBrush Lib "gdi32" (ByVal crColor As Long) As LongPtr
 Public Declare Function FillRect Lib "user32" (ByVal hDC As LongPtr, lpRect As RECT, ByVal hBrush As LongPtr) As Long
+Public Declare Function SQLGetInstalledDrivers Lib "odbccp32" Alias "SQLGetInstalledDriversW" (ByVal lpszBuf As LongPtr, ByVal cbBufMax As Integer, pcbBufOut As Integer) As Long
+Private Declare Function QueryPerformanceCounter Lib "kernel32" (lpPerformanceCount As Currency) As Long
+Private Declare Function QueryPerformanceFrequency Lib "kernel32" (lpFrequency As Currency) As Long
 
 Public Type tagInitCommonControlsEx
    lngSize              As Long
@@ -335,6 +338,16 @@ End Sub
 Public Property Get InIde() As Boolean
     Debug.Assert pvSetTrue(InIde)
 End Property
+
+Public Property Get TimerEx() As Double
+    Dim cFreq           As Currency
+    Dim cValue          As Currency
+    
+    Call QueryPerformanceFrequency(cFreq)
+    Call QueryPerformanceCounter(cValue)
+    TimerEx = cValue / cFreq
+End Property
+
 
 '=========================================================================
 ' Functions
@@ -886,6 +899,36 @@ Public Function DispInvoke( _
 QH:
     If VarType(RetVal) = vbVariant Then
         RetVal = Array(hResult, uInfo.sCode, uInfo.Description, uInfo.Source)
+    End If
+End Function
+
+Public Function At(Data As Variant, ByVal Index As Long, Optional Default As String) As String
+    On Error GoTo RH
+    At = Default
+    If IsArray(Data) Then
+        If LBound(Data) <= Index And Index <= UBound(Data) Then
+            At = Data(Index)
+        End If
+    End If
+RH:
+End Function
+
+Public Function ConcatCollection(oCol As Collection, Optional Separator As String = vbCrLf) As String
+    Dim lSize           As Long
+    Dim vElem           As Variant
+    
+    For Each vElem In oCol
+        lSize = lSize + Len(vElem) + Len(Separator)
+    Next
+    If lSize > 0 Then
+        ConcatCollection = String$(lSize - Len(Separator), 0)
+        lSize = 1
+        For Each vElem In oCol
+            If lSize <= Len(ConcatCollection) Then
+                Mid$(ConcatCollection, lSize, Len(vElem) + Len(Separator)) = vElem & Separator
+            End If
+            lSize = lSize + Len(vElem) + Len(Separator)
+        Next
     End If
 End Function
 
