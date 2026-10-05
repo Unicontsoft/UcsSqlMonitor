@@ -286,6 +286,13 @@ Friend Function frInit( _
 
     On Error GoTo EH
     pvLoadProfiles
+    '--- a given server opens with its own profile
+    If LenB(sServer) <> 0 Then
+        cobServer.Text = sServer
+        If SearchCollection(m_cProfiles, sServer) Then
+            pvContents = pvProfile(sServer)
+        End If
+    End If
     '--- show UI
     m_bOk = False
     Show vbModal

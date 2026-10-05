@@ -158,6 +158,14 @@ Begin VB.Form frmMain
          Caption         =   "Disconnect"
          Index           =   2
       End
+      Begin VB.Menu mnuTree
+         Caption         =   "-"
+         Index           =   3
+      End
+      Begin VB.Menu mnuTree
+         Caption         =   "Properties..."
+         Index           =   4
+      End
    End
 End
 Attribute VB_Name = "frmMain"
@@ -225,6 +233,7 @@ Private Enum UcsMenuIndexes
     ucsMnuMainTree = 3
     ucsMnuTreeConnect = 0
     ucsMnuTreeDisconnect = 2
+    ucsMnuTreeProperties = 4
 End Enum
 
 '=========================================================================
@@ -391,7 +400,6 @@ Private Sub pvShowResults(oServer As cServerMonitor, rs As Recordset)
     End If
     sServer = oServer.Server
     pvPrepareList
-    Debug.Print "Before sync rs", TimerEx
     '--- sync rs, sp_who2 columns map to list fields by position up to REQUESTID
     Set m_cList = InitIndexCollection(m_rsList, "Server", "SPID")
     Do While MoveRecordset(rs, lIter)
@@ -432,7 +440,6 @@ Private Sub pvShowResults(oServer As cServerMonitor, rs As Recordset)
             lIdx = lIdx + 1
         Next
     Loop
-    Debug.Print "Before m_rsList", TimerEx
     If m_rsList.RecordCount <> 0 Then
         Set cResult = InitIndexCollection(rs, "SPID")
         lIter = 0
@@ -515,6 +522,7 @@ Private Sub pvPrepareList()
         Set m_rsListSort = m_rsList.Clone
         m_rsListSort.Sort = "Server, DB, Login, Host, SPID"
         m_rsListSort.Filter = pvGetFilter
+        pvShowSortOrder
     Else
         sSort = m_rsListSort.Sort
         With New PropertyBag
@@ -524,7 +532,6 @@ Private Sub pvPrepareList()
         Set m_rsListSort = m_rsList.Clone
         m_rsListSort.Sort = sSort
         m_rsListSort.Filter = pvGetFilter
-        Debug.Print "After sort", TimerEx
     End If
     If m_rsStats Is Nothing Then
         Set m_rsStats = CreateRecordset( _
@@ -536,6 +543,37 @@ Private Sub pvPrepareList()
         Set m_cStats = InitIndexCollection(m_rsStats, "Host", "Login", "DB")
     End If
 End Sub
+
+'--- header arrows for the sort keys, all but the SPID tie-break
+Private Sub pvShowSortOrder()
+    Dim cOrder          As Collection
+    Dim vSplit          As Variant
+    Dim lIdx            As Long
+    Dim sElem           As String
+    Dim sField          As String
+    Dim vOrder          As Variant
+
+    Set cOrder = New Collection
+    vSplit = Split(m_rsListSort.Sort, ",")
+    For lIdx = 0 To UBound(vSplit)
+        sElem = Trim$(vSplit(lIdx))
+        sField = At(Split(sElem, " "), 0)
+        If Not (sField = "SPID" And lIdx = UBound(vSplit) And lIdx > 0) And Not SearchCollection(cOrder, sField) Then
+            cOrder.Add IIf(pvIsSortDesc(sElem), ucsSortDescending, ucsSortAscending), sField
+        End If
+    Next
+    For lIdx = 0 To UBound(m_aColumns)
+        If SearchCollection(cOrder, m_aColumns(lIdx).Field, RetVal:=vOrder) Then
+            lvwMain.ColumnSortOrder(lIdx + 1) = vOrder
+        Else
+            lvwMain.ColumnSortOrder(lIdx + 1) = ucsSortNone
+        End If
+    Next
+End Sub
+
+Private Function pvIsSortDesc(sElem As String) As Boolean
+    pvIsSortDesc = (UCase$(Right$(sElem, 5)) = " DESC")
+End Function
 
 Private Sub pvRefreshList(ByVal bRefreshData As Boolean, ByVal bRefreshStats As Boolean)
     lvwMain.Redraw = False
@@ -710,7 +748,8 @@ Private Function pvGetRowKey(ByVal sServer As String, ByVal vSpid As Variant) As
     pvGetRowKey = "#" & sServer & "#" & C_Str(vSpid)
 End Function
 
-Private Sub pvConnect()
+'--- the dialog opens with the profile of the given server, else with the last used one
+Private Sub pvConnect(Optional ByVal sServer As String)
     Const FUNC_NAME     As String = "pvConnect"
     Dim oFrmConnect     As frmConnect
     Dim oCmd            As ADODB.Command
@@ -719,7 +758,6 @@ Private Sub pvConnect()
     Dim bSystemProcesses As Boolean
     Dim bStatements     As Boolean
     Dim sConnectString  As String
-    Dim sServer         As String
 
     On Error GoTo EH
     Set oFrmConnect = New frmConnect
@@ -1071,26 +1109,41 @@ End Sub
 Private Sub lvwMain_ColumnClick(ByVal Col As Long)
     Const FUNC_NAME     As String = "lvwMain_ColumnClick"
     Dim sKey            As String
-    Dim sPrev           As String
-    Dim sDesc           As String
+    Dim bCtrl           As Boolean
+    Dim vSplit          As Variant
+    Dim lIdx            As Long
+    Dim sElem           As String
+    Dim sField          As String
+    Dim bDesc           As Boolean
+    Dim sSort           As String
 
     On Error GoTo EH
     If m_rsListSort Is Nothing Then
         Exit Sub
     End If
     sKey = m_aColumns(Col - 1).Field
-    If InStr(m_rsListSort.Sort, sKey & ",") Then
-        sDesc = " DESC"
-    End If
-    If (GetShiftState() And vbCtrlMask) <> 0 Then
-        sPrev = Replace(Replace(Replace(m_rsListSort.Sort, sKey & " DESC, ", vbNullString), sKey & ", ", vbNullString), ", SPID", vbNullString)
-        If sPrev = "SPID" Then
-            sPrev = vbNullString
-        Else
-            sPrev = sPrev & ", "
+    bCtrl = ((GetShiftState() And vbCtrlMask) <> 0)
+    '--- a new column sorts ascending, clicking the primary one flips it. Ctrl appends
+    '--- the column to the keys or flips it where it is
+    vSplit = Split(m_rsListSort.Sort, ",")
+    For lIdx = 0 To UBound(vSplit)
+        sElem = Trim$(vSplit(lIdx))
+        sField = At(Split(sElem, " "), 0)
+        If sField = sKey Then
+            If lIdx = 0 Or bCtrl Then
+                bDesc = Not pvIsSortDesc(sElem)
+            End If
+        ElseIf bCtrl And sField <> "SPID" Then
+            sSort = sSort & sElem & ", "
         End If
+    Next
+    sSort = sSort & sKey & IIf(bDesc, " DESC", vbNullString)
+    '--- SPID breaks ties so rows keep their places between refreshes
+    If sKey <> "SPID" Then
+        sSort = sSort & ", SPID"
     End If
-    m_rsListSort.Sort = sPrev & sKey & sDesc & ", SPID"
+    m_rsListSort.Sort = sSort
+    pvShowSortOrder
     pvRefreshUI
     Exit Sub
 EH:
@@ -1274,6 +1327,8 @@ Private Sub mnuTree_Click(Index As Integer)
         pvConnect
     Case ucsMnuTreeDisconnect
         pvDisconnect m_sMenuServer
+    Case ucsMnuTreeProperties
+        pvConnect m_sMenuServer
     End Select
     Exit Sub
 EH:
@@ -1450,7 +1505,8 @@ Private Sub tvwServers_MouseDown(Button As Integer, Shift As Integer, X As Singl
     tvwServers.SelectedNode = hNode
     m_sMenuServer = tvwServers.NodeKey(hNode)
     mnuTree(ucsMnuTreeDisconnect).Enabled = pvIsConnected(m_sMenuServer)
-    PopupMenu mnuMain(ucsMnuMainTree)
+    mnuTree(ucsMnuTreeProperties).Enabled = (LenB(m_sMenuServer) <> 0)
+    PopupMenu mnuMain(ucsMnuMainTree), DefaultMenu:=mnuTree(ucsMnuTreeConnect)
     Exit Sub
 EH:
     PrintError FUNC_NAME

@@ -16,6 +16,12 @@ Public Enum UcsMonitorMode
     ucsMonExtEvents
 End Enum
 
+Public Enum UcsSortOrder
+    ucsSortNone
+    ucsSortAscending
+    ucsSortDescending
+End Enum
+
 Public Enum UcsErrorIndexes
     ucsErrNumber
     ucsErrSource
@@ -105,8 +111,16 @@ Public Const LVM_SETCOLUMN                  As Long = &H1060
 Public Const LVM_INSERTCOLUMN               As Long = &H1061
 Public Const LVM_GETITEMTEXT                As Long = &H1073
 Public Const LVM_SETITEMTEXT                As Long = &H1074
+'--- for HDITEM.Mask
+Public Const HDI_FORMAT                     As Long = &H4
+'--- for HDITEM.fmt
+Public Const HDF_SORTDOWN                   As Long = &H200
+Public Const HDF_SORTUP                     As Long = &H400
+'--- header messages
+Public Const HDM_GETITEMW                   As Long = &H120B
+Public Const HDM_SETITEMW                   As Long = &H120C
 '--- list-view notifications
-Public Const LVN_GETDISPINFOW               As Long = -177
+Public Const LVN_GETDISPINFOW              As Long = -177
 Public Const LVN_KEYDOWN                    As Long = -155
 Public Const LVN_ODSTATECHANGED             As Long = -115
 Public Const LVN_COLUMNCLICK                As Long = -108
@@ -295,6 +309,21 @@ Public Type LOGFONTW
     lfQuality           As Byte
     lfPitchAndFamily    As Byte
     lfFaceName(0 To 31) As Integer
+End Type
+
+Public Type HDITEM
+    Mask                As Long
+    cxy                 As Long
+    pszText             As LongPtr
+    hbm                 As LongPtr
+    cchTextMax          As Long
+    fmt                 As Long
+    lParam              As LongPtr
+    iImage              As Long
+    iOrder              As Long
+    uType               As Long
+    pvFilter            As LongPtr
+    State               As Long
 End Type
 
 Public Type LVCOLUMN

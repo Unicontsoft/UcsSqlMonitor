@@ -191,7 +191,6 @@ Private Sub pvFetch()
     On Error Resume Next
     lState = m_rsResult.State
     If Err.Number <> 0 Then
-        Debug.Print MODULE_NAME & ".pvFetch(" & m_sServer & ") Error="; Error, TimerEx
         pvTestConn
     End If
     On Error GoTo EH
@@ -210,7 +209,6 @@ Private Sub pvFetch()
     On Error Resume Next
     m_rsResult.Open oCmd, , adOpenStatic, adLockBatchOptimistic, adAsyncExecute Or adAsyncFetch
     If Err.Number <> 0 Then
-        Debug.Print MODULE_NAME & ".pvFetch(" & m_sServer & ") Error="; Error, TimerEx
         pvTestConn
     End If
     Exit Sub
@@ -255,10 +253,6 @@ End Sub
 ' Control events
 '=========================================================================
 
-Private Sub m_oConn_Disconnect(adStatus As ADODB.EventStatusEnum, ByVal pConnection As ADODB.Connection)
-    Debug.Print MODULE_NAME & ".m_oConn_Disconnect(" & m_sServer & ") adStatus="; adStatus, TimerEx
-End Sub
-
 Private Sub m_oConn_InfoMessage(ByVal pError As ADODB.Error, adStatus As ADODB.EventStatusEnum, ByVal pConnection As ADODB.Connection)
     Const FUNC_NAME     As String = "m_oConn_InfoMessage"
 
@@ -286,7 +280,6 @@ Private Sub m_rsResult_FetchComplete(ByVal pError As ADODB.Error, adStatus As AD
         Exit Sub
     End If
     If Not pError Is Nothing Then
-        Debug.Print MODULE_NAME & ".m_rsResult_FetchComplete(" & m_sServer & ") " & pError.Description
         Exit Sub
     End If
     bDelayed = m_bDelayFetch

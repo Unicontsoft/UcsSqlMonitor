@@ -113,11 +113,28 @@ Private Sub pvSetRecordset(rs As Recordset)
     If Not rs Is Nothing Then
         Set m_rsStats = rs.Clone
         m_rsStats.Sort = sSort
+        pvShowSortOrder
         lvwStats.RowCount = m_rsStats.RecordCount
     Else
         lvwStats.RowCount = 0
     End If
     lvwStats.Refresh
+End Sub
+
+'--- header arrow for the single sort key
+Private Sub pvShowSortOrder()
+    Dim lIdx            As Long
+
+    For lIdx = 0 To UBound(m_aColumns)
+        Select Case m_rsStats.Sort
+        Case m_aColumns(lIdx).Field
+            lvwStats.ColumnSortOrder(lIdx + 1) = ucsSortAscending
+        Case m_aColumns(lIdx).Field & " DESC"
+            lvwStats.ColumnSortOrder(lIdx + 1) = ucsSortDescending
+        Case Else
+            lvwStats.ColumnSortOrder(lIdx + 1) = ucsSortNone
+        End Select
+    Next
 End Sub
 
 Private Function pvMoveToRow(ByVal lRow As Long) As Boolean
@@ -176,6 +193,7 @@ Private Sub lvwStats_ColumnClick(ByVal Col As Long)
     Else
         m_rsStats.Sort = sKey
     End If
+    pvShowSortOrder
     lvwStats.Refresh
     Exit Sub
 EH:

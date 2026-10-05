@@ -274,6 +274,44 @@ Public Property Let ColumnWidth(ByVal lCol As Long, ByVal lValue As Long)
     End If
 End Property
 
+'--- the arrow in the column header, the themed header draws it
+Public Property Get ColumnSortOrder(ByVal lCol As Long) As UcsSortOrder
+    Dim uItem           As HDITEM
+
+    If m_hList = 0 Then
+        Exit Property
+    End If
+    uItem.Mask = HDI_FORMAT
+    Call SendMessage(SendMessage(m_hList, LVM_GETHEADER, 0, ByVal 0&), HDM_GETITEMW, lCol - 1, uItem)
+    If (uItem.fmt And HDF_SORTUP) <> 0 Then
+        ColumnSortOrder = ucsSortAscending
+    ElseIf (uItem.fmt And HDF_SORTDOWN) <> 0 Then
+        ColumnSortOrder = ucsSortDescending
+    End If
+End Property
+
+Public Property Let ColumnSortOrder(ByVal lCol As Long, ByVal eValue As UcsSortOrder)
+    Dim hHeader         As LongPtr
+    Dim uItem           As HDITEM
+
+    If m_hList = 0 Then
+        Exit Property
+    End If
+    hHeader = SendMessage(m_hList, LVM_GETHEADER, 0, ByVal 0&)
+    uItem.Mask = HDI_FORMAT
+    If SendMessage(hHeader, HDM_GETITEMW, lCol - 1, uItem) = 0 Then
+        Exit Property
+    End If
+    uItem.fmt = uItem.fmt And Not (HDF_SORTUP Or HDF_SORTDOWN)
+    Select Case eValue
+    Case ucsSortAscending
+        uItem.fmt = uItem.fmt Or HDF_SORTUP
+    Case ucsSortDescending
+        uItem.fmt = uItem.fmt Or HDF_SORTDOWN
+    End Select
+    Call SendMessage(hHeader, HDM_SETITEMW, lCol - 1, uItem)
+End Property
+
 Public Property Get CellText(ByVal lRow As Long, ByVal lCol As Long) As String
     Dim uItem           As LVITEM
     Dim sBuffer         As String

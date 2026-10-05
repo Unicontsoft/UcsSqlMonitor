@@ -18,7 +18,7 @@ Attribute VB_Exposed = False
 '
 '   Shared UcsSqlMonitor extended events session and its incremental reader.
 '   Every monitor holds a shared app lock, the last one to leave drops the session.
-'   Statement events are always collected, monitors not tracing them skip them
+'   Statement events are added by the first monitor tracing them, the others skip them
 '
 '=========================================================================
 Option Explicit
@@ -34,6 +34,7 @@ Private Const DBL_RESYNC_INTERVAL       As Double = 60
 Private Const LNG_OBJTYPE_FUNCTION      As Long = 20038
 Private Const LNG_OBJTYPE_PREPARED      As Long = 20816
 Private Const ERR_SQL_XE_NOT_FOUND      As Long = 15151
+Private Const ERR_SQL_XE_EVENT_EXISTS   As Long = 25625
 Private Const ERR_SQL_XE_EXISTS         As Long = 25631
 Private Const ERR_SQL_XE_STARTED        As Long = 25705
 
@@ -227,11 +228,6 @@ Private Sub pvEnsureSession()
     cSql.Add "ADD EVENT sqlserver.rpc_completed ("
     cSql.Add "    ACTION (package0.event_sequence, sqlserver.session_id, sqlserver.database_name)"
     cSql.Add "    WHERE sqlserver.is_system = 0 AND " & pvNotOwnApp() & " AND object_name <> N'sp_reset_connection'),"
-    '--- scalar FUNCTION statements fire per row, PREPARED repeats the sp_executesql text
-    cSql.Add "ADD EVENT sqlserver.sp_statement_completed ("
-    cSql.Add "    ACTION (package0.event_sequence, sqlserver.session_id, sqlserver.database_name)"
-    cSql.Add "    WHERE sqlserver.is_system = 0 AND " & pvNotOwnApp() & _
-        " AND object_type <> " & LNG_OBJTYPE_FUNCTION & " AND object_type <> " & LNG_OBJTYPE_PREPARED & "),"
     cSql.Add "ADD EVENT sqlserver.attention ("
     cSql.Add "    ACTION (package0.event_sequence, sqlserver.session_id, sqlserver.sql_text)"
     cSql.Add "    WHERE sqlserver.is_system = 0 AND " & pvNotOwnApp() & "),"
@@ -254,6 +250,23 @@ Private Sub pvEnsureSession()
     '--- another monitor may have started it first
     cSql.Add "    IF ERROR_NUMBER() <> " & ERR_SQL_XE_STARTED & " THROW"
     cSql.Add "END CATCH"
+    If m_bStatements Then
+        '--- added to the running session on demand, it stays until the last monitor drops it
+        cSql.Add "IF NOT EXISTS (SELECT * FROM sys.dm_xe_sessions s JOIN sys.dm_xe_session_events e ON e.event_session_address = s.address"
+        cSql.Add "        WHERE s.name = N'" & STR_SESSION_NAME & "' AND e.event_name = N'sp_statement_completed')"
+        cSql.Add "BEGIN TRY"
+        '--- scalar FUNCTION statements fire per row, PREPARED repeats the sp_executesql text
+        cSql.Add "    ALTER EVENT SESSION [" & STR_SESSION_NAME & "] ON SERVER"
+        cSql.Add "    ADD EVENT sqlserver.sp_statement_completed ("
+        cSql.Add "        ACTION (package0.event_sequence, sqlserver.session_id, sqlserver.database_name)"
+        cSql.Add "        WHERE sqlserver.is_system = 0 AND " & pvNotOwnApp() & _
+            " AND object_type <> " & LNG_OBJTYPE_FUNCTION & " AND object_type <> " & LNG_OBJTYPE_PREPARED & ")"
+        cSql.Add "END TRY"
+        cSql.Add "BEGIN CATCH"
+        '--- another monitor may have added it first
+        cSql.Add "    IF ERROR_NUMBER() <> " & ERR_SQL_XE_EVENT_EXISTS & " THROW"
+        cSql.Add "END CATCH"
+    End If
     m_oConn.Execute ConcatCollection(cSql), , adExecuteNoRecords
 End Sub
 
