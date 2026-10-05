@@ -717,13 +717,14 @@ Private Sub pvConnect()
     Dim eMode           As UcsMonitorMode
     Dim lRefreshRate    As Long
     Dim bSystemProcesses As Boolean
+    Dim bStatements     As Boolean
     Dim sConnectString  As String
     Dim sServer         As String
 
     On Error GoTo EH
     Set oFrmConnect = New frmConnect
-    If oFrmConnect.frInit(oCmd, eMode, lRefreshRate, bSystemProcesses, sConnectString, sServer) Then
-        pvAddServer sServer, oCmd, eMode, lRefreshRate, bSystemProcesses, sConnectString
+    If oFrmConnect.frInit(oCmd, eMode, lRefreshRate, bSystemProcesses, bStatements, sConnectString, sServer) Then
+        pvAddServer sServer, oCmd, eMode, lRefreshRate, bSystemProcesses, bStatements, sConnectString
     End If
     Exit Sub
 EH:
@@ -739,13 +740,14 @@ Private Sub pvConnectProfile(sServer As String)
     Dim eMode           As UcsMonitorMode
     Dim lRefreshRate    As Long
     Dim bSystemProcesses As Boolean
+    Dim bStatements     As Boolean
     Dim sConnectString  As String
 
     On Error GoTo EH
     Screen.MousePointer = vbHourglass
     Set oFrmConnect = New frmConnect
-    If oFrmConnect.frConnectProfile(sServer, oCmd, eMode, lRefreshRate, bSystemProcesses, sConnectString) Then
-        pvAddServer sServer, oCmd, eMode, lRefreshRate, bSystemProcesses, sConnectString
+    If oFrmConnect.frConnectProfile(sServer, oCmd, eMode, lRefreshRate, bSystemProcesses, bStatements, sConnectString) Then
+        pvAddServer sServer, oCmd, eMode, lRefreshRate, bSystemProcesses, bStatements, sConnectString
     End If
     Screen.MousePointer = vbDefault
     Exit Sub
@@ -761,6 +763,7 @@ Private Sub pvAddServer( _
             ByVal eMode As UcsMonitorMode, _
             ByVal lRefreshRate As Long, _
             ByVal bSystemProcesses As Boolean, _
+            ByVal bStatements As Boolean, _
             sConnectString As String)
     Const FUNC_NAME     As String = "pvAddServer"
     Dim oServer         As cServerMonitor
@@ -768,7 +771,7 @@ Private Sub pvAddServer( _
 
     On Error GoTo EH
     Set oServer = New cServerMonitor
-    If Not pvInitServer(oServer, oCmd, eMode, lRefreshRate, bSystemProcesses, sConnectString, sServer) Then
+    If Not pvInitServer(oServer, oCmd, eMode, lRefreshRate, bSystemProcesses, bStatements, sConnectString, sServer) Then
         Exit Sub
     End If
     If SearchCollection(m_cServers, LCase$(oServer.Server), RetVal:=oOther) Then
@@ -797,10 +800,11 @@ Private Function pvInitServer( _
             ByVal eMode As UcsMonitorMode, _
             ByVal lRefreshRate As Long, _
             ByVal bSystemProcesses As Boolean, _
+            ByVal bStatements As Boolean, _
             sConnectString As String, _
             sServer As String) As Boolean
     On Error GoTo EH
-    oServer.Init oCmd, eMode, lRefreshRate, bSystemProcesses, sConnectString, sServer, Me
+    oServer.Init oCmd, eMode, lRefreshRate, bSystemProcesses, bStatements, sConnectString, sServer, Me
     pvInitServer = True
     Exit Function
 EH:

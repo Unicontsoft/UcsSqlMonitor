@@ -2,7 +2,7 @@ VERSION 5.00
 Begin VB.Form frmConnect
    BorderStyle     =   3  'Fixed Dialog
    Caption         =   "Connect"
-   ClientHeight    =   4608
+   ClientHeight    =   4944
    ClientLeft      =   36
    ClientTop       =   336
    ClientWidth     =   4548
@@ -10,7 +10,7 @@ Begin VB.Form frmConnect
    LinkTopic       =   "frmConnect"
    MaxButton       =   0   'False
    MinButton       =   0   'False
-   ScaleHeight     =   4608
+   ScaleHeight     =   4944
    ScaleWidth      =   4548
    StartUpPosition =   2  'CenterScreen
    Begin VB.CheckBox chkSystemProcesses
@@ -27,6 +27,14 @@ Begin VB.Form frmConnect
       Left            =   588
       TabIndex        =   8
       Top             =   3528
+      Width           =   3876
+   End
+   Begin VB.CheckBox chkStatements
+      Caption         =   "Trace statements in procedures"
+      Height          =   264
+      Left            =   588
+      TabIndex        =   9
+      Top             =   3864
       Width           =   3876
    End
    Begin VB.ComboBox cobServer
@@ -66,8 +74,8 @@ Begin VB.Form frmConnect
       Caption         =   "Cancel"
       Height          =   348
       Left            =   3108
-      TabIndex        =   10
-      Top             =   4032
+      TabIndex        =   11
+      Top             =   4368
       Width           =   1272
    End
    Begin VB.CommandButton Command1
@@ -75,8 +83,8 @@ Begin VB.Form frmConnect
       Default         =   -1  'True
       Height          =   348
       Left            =   1764
-      TabIndex        =   9
-      Top             =   4032
+      TabIndex        =   10
+      Top             =   4368
       Width           =   1272
    End
    Begin VB.TextBox txtDB
@@ -106,7 +114,7 @@ Begin VB.Form frmConnect
       Caption         =   "Refresh rate:"
       Height          =   264
       Left            =   588
-      TabIndex        =   16
+      TabIndex        =   17
       Top             =   2772
       Width           =   1104
    End
@@ -114,7 +122,7 @@ Begin VB.Form frmConnect
       Caption         =   "Type:"
       Height          =   264
       Left            =   588
-      TabIndex        =   15
+      TabIndex        =   16
       Top             =   1932
       Width           =   1104
    End
@@ -122,7 +130,7 @@ Begin VB.Form frmConnect
       Caption         =   "SQL Server:"
       Height          =   264
       Left            =   588
-      TabIndex        =   14
+      TabIndex        =   15
       Top             =   168
       Width           =   1104
    End
@@ -130,7 +138,7 @@ Begin VB.Form frmConnect
       Caption         =   "SQL DB:"
       Height          =   264
       Left            =   588
-      TabIndex        =   13
+      TabIndex        =   14
       Top             =   588
       Width           =   1104
    End
@@ -138,7 +146,7 @@ Begin VB.Form frmConnect
       Caption         =   "User:"
       Height          =   264
       Left            =   588
-      TabIndex        =   12
+      TabIndex        =   13
       Top             =   1008
       Width           =   1104
    End
@@ -146,7 +154,7 @@ Begin VB.Form frmConnect
       Caption         =   "Pass:"
       Height          =   264
       Left            =   588
-      TabIndex        =   11
+      TabIndex        =   12
       Top             =   1428
       Width           =   1104
    End
@@ -200,7 +208,8 @@ Private Property Get pvContents() As String
         -optSpWho2.Value, _
         cobRerfesh.ListIndex, _
         chkSystemProcesses.Value, _
-        chkEncrypt.Value), STR_DELIM)
+        chkEncrypt.Value, _
+        chkStatements.Value), STR_DELIM)
 End Property
 
 Private Property Let pvContents(sValue As String)
@@ -221,6 +230,7 @@ Private Property Let pvContents(sValue As String)
     cobRerfesh.ListIndex = lIdx
     chkSystemProcesses.Value = C_Lng(At(vSplit, 7))
     chkEncrypt.Value = C_Lng(At(vSplit, 8))
+    chkStatements.Value = C_Lng(At(vSplit, 9))
     '--- profiles saved with sp_whoisactive have neither option set
     If Not optSpWho2.Value Then
         optExtEvents.Value = True
@@ -269,6 +279,7 @@ Friend Function frInit( _
             eMode As UcsMonitorMode, _
             lRefreshRate As Long, _
             bSystemProcesses As Boolean, _
+            bStatements As Boolean, _
             sConnectString As String, _
             sServer As String) As Boolean
     Const FUNC_NAME     As String = "frInit"
@@ -284,6 +295,7 @@ Friend Function frInit( _
         eMode = m_eMode
         lRefreshRate = m_lRefreshRate
         bSystemProcesses = (chkSystemProcesses.Value = vbChecked)
+        bStatements = (chkStatements.Value = vbChecked)
         sConnectString = m_sConnectString
         sServer = cobServer.Text
         frInit = True
@@ -302,6 +314,7 @@ Friend Function frConnectProfile( _
             eMode As UcsMonitorMode, _
             lRefreshRate As Long, _
             bSystemProcesses As Boolean, _
+            bStatements As Boolean, _
             sConnectString As String) As Boolean
     Const FUNC_NAME     As String = "frConnectProfile"
 
@@ -315,6 +328,7 @@ Friend Function frConnectProfile( _
             eMode = m_eMode
             lRefreshRate = m_lRefreshRate
             bSystemProcesses = (chkSystemProcesses.Value = vbChecked)
+            bStatements = (chkStatements.Value = vbChecked)
             sConnectString = m_sConnectString
             frConnectProfile = True
         End If
@@ -449,18 +463,32 @@ Private Function pvGetConnectString(sDriver As String) As String
 
     bEncrypt = (chkEncrypt.Value = vbChecked)
     If LenB(sDriver) <> 0 Then
-        '--- ODBC values in braces so ; in a password does not end it
-        pvGetConnectString = "Provider=MSDASQL;Driver={" & sDriver & "};Server=" & cobServer.Text & ";" & _
-            IIf(LenB(txtDB.Text) <> 0, "Database=" & txtDB.Text & ";", vbNullString) & _
-            IIf(LenB(txtUser.Text) <> 0, "UID={" & Replace(txtUser.Text, "}", "}}") & "};PWD={" & Replace(txtPass.Text, "}", "}}") & "};", "Trusted_Connection=Yes;") & _
+        pvGetConnectString = "Provider=MSDASQL;Driver=" & pvBraceValue(sDriver) & ";Server=" & pvBraceValue(cobServer.Text) & ";" & _
+            IIf(LenB(txtDB.Text) <> 0, "Database=" & pvBraceValue(txtDB.Text) & ";", vbNullString) & _
+            IIf(LenB(txtUser.Text) <> 0, "UID=" & pvBraceValue(txtUser.Text) & ";PWD=" & pvBraceValue(txtPass.Text) & ";", "Trusted_Connection=Yes;") & _
             IIf(bEncrypt, "Encrypt=Yes;TrustServerCertificate=Yes;", "Encrypt=No;") & _
             "APP=" & App.Title & ";OLE DB Services=-2"
     Else
-        pvGetConnectString = "Provider=SQLOLEDB;Data Source=" & cobServer.Text & ";" & _
-            IIf(LenB(txtDB.Text) <> 0, "Initial catalog=" & txtDB.Text & ";", vbNullString) & _
-            IIf(LenB(txtUser.Text) <> 0, "User ID=" & txtUser.Text & ";Password=" & txtPass.Text & ";", "Integrated security=SSPI;") & _
+        pvGetConnectString = "Provider=SQLOLEDB;Data Source=" & pvQuoteValue(cobServer.Text) & ";" & _
+            IIf(LenB(txtDB.Text) <> 0, "Initial catalog=" & pvQuoteValue(txtDB.Text) & ";", vbNullString) & _
+            IIf(LenB(txtUser.Text) <> 0, "User ID=" & pvQuoteValue(txtUser.Text) & ";Password=" & pvQuoteValue(txtPass.Text) & ";", "Integrated security=SSPI;") & _
             IIf(bEncrypt, "Use Encryption for Data=True;", vbNullString) & _
             "Application Name=" & App.Title & ";OLE DB Services=-2"
+    End If
+End Function
+
+'--- ODBC value in braces with } inside doubled, MSDASQL passes it through as is
+Private Function pvBraceValue(sValue As String) As String
+    pvBraceValue = "{" & Replace(sValue, "}", "}}") & "}"
+End Function
+
+'--- OLE DB value in double quotes when ; quotes or edge spaces would break it, " inside doubled
+Private Function pvQuoteValue(sValue As String) As String
+    If InStr(sValue, ";") > 0 Or InStr(sValue, """") > 0 Or InStr(sValue, "'") > 0 _
+            Or Trim$(sValue) <> sValue Then
+        pvQuoteValue = """" & Replace(sValue, """", """""") & """"
+    Else
+        pvQuoteValue = sValue
     End If
 End Function
 

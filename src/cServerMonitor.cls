@@ -36,6 +36,7 @@ Private Const LNG_TIMEOUT               As Long = 5
 Private m_sServer                   As String
 Private m_eMode                     As UcsMonitorMode
 Private m_bSystemProcesses          As Boolean
+Private m_bStatements               As Boolean
 Private m_sConnectString            As String
 Private m_oCmd                      As ADODB.Command
 Private WithEvents m_oConn          As ADODB.Connection
@@ -91,6 +92,7 @@ Public Sub Init( _
             ByVal eMode As UcsMonitorMode, _
             ByVal lRefreshRate As Long, _
             ByVal bSystemProcesses As Boolean, _
+            ByVal bStatements As Boolean, _
             sConnectString As String, _
             sServer As String, _
             oOwner As frmMain)
@@ -100,6 +102,7 @@ Public Sub Init( _
     m_bClosing = False
     m_eMode = eMode
     m_bSystemProcesses = bSystemProcesses
+    m_bStatements = bStatements
     m_sConnectString = sConnectString
     m_dblInterval = 1 / lRefreshRate
     pvStart oOwner
@@ -166,7 +169,7 @@ End Sub
 Private Sub pvStart(oOwner As frmMain)
     If m_eMode = ucsMonExtEvents Then
         Set m_oExtEvents = New cExtEvents
-        m_oExtEvents.Init m_oConn
+        m_oExtEvents.Init m_oConn, m_bStatements
     End If
     Set m_oOwner = oOwner
 End Sub
@@ -228,7 +231,7 @@ Private Sub pvTestConn()
         m_oConn.Open m_sConnectString
         Set m_oCmd.ActiveConnection = m_oConn
         If Not m_oExtEvents Is Nothing Then
-            m_oExtEvents.Init m_oConn
+            m_oExtEvents.Init m_oConn, m_bStatements
         End If
     End If
 End Sub

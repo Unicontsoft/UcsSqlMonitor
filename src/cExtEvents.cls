@@ -17,7 +17,8 @@ Attribute VB_Exposed = False
 '   Copyright (c) 2026 Unicontsoft
 '
 '   Shared UcsSqlMonitor extended events session and its incremental reader.
-'   Every monitor holds a shared app lock, the last one to leave drops the session
+'   Every monitor holds a shared app lock, the last one to leave drops the session.
+'   Statement events are always collected, monitors not tracing them skip them
 '
 '=========================================================================
 Option Explicit
@@ -38,6 +39,7 @@ Private Const ERR_SQL_XE_STARTED        As Long = 25705
 
 Private m_oConn                     As ADODB.Connection
 Private m_oCmd                      As ADODB.Command
+Private m_bStatements               As Boolean
 Private m_sPath                     As String
 Private m_sPattern                  As String
 Private m_bPathStale                As Boolean
@@ -59,11 +61,12 @@ End Sub
 '=========================================================================
 
 '--- takes the shared lock and creates/starts the session, raises on failure
-Public Sub Init(oConn As ADODB.Connection)
+Public Sub Init(oConn As ADODB.Connection, ByVal bStatements As Boolean)
     Dim rs              As Recordset
     Dim lResult         As Long
 
     Set m_oConn = oConn
+    m_bStatements = bStatements
     Set rs = m_oConn.Execute("SET NOCOUNT ON" & vbCrLf & _
         "DECLARE @rc INT" & vbCrLf & _
         "EXEC @rc = master.sys.sp_getapplock @Resource = N'" & STR_SESSION_NAME & "', @LockMode = 'Shared', @LockOwner = 'Session', @LockTimeout = 10000" & vbCrLf & _
@@ -85,6 +88,7 @@ Public Sub Init(oConn As ADODB.Connection)
         m_oCmd.Parameters.Append pvCreateDecimalParam("dropped")
         m_oCmd.Parameters.Append m_oCmd.CreateParameter("full", adInteger, adParamInput)
         m_oCmd.Parameters.Append m_oCmd.CreateParameter("system", adInteger, adParamInput)
+        m_oCmd.Parameters.Append m_oCmd.CreateParameter("statements", adInteger, adParamInput)
         m_oCmd.Parameters.Append m_oCmd.CreateParameter("path", adVarWChar, adParamInput, 260)
         m_oCmd.Parameters.Append m_oCmd.CreateParameter("pattern", adVarWChar, adParamInput, 260)
         m_vFile = Null
@@ -140,6 +144,7 @@ Public Function FetchCommand(ByVal bSystem As Boolean) As ADODB.Command
     m_oCmd.Parameters("dropped").Value = m_vDropped
     m_oCmd.Parameters("full").Value = IIf(bFull, 1, 0)
     m_oCmd.Parameters("system").Value = IIf(bSystem, 1, 0)
+    m_oCmd.Parameters("statements").Value = IIf(m_bStatements, 1, 0)
     m_oCmd.Parameters("path").Value = IIf(LenB(m_sPath) <> 0, m_sPath, Null)
     m_oCmd.Parameters("pattern").Value = IIf(LenB(m_sPattern) <> 0, m_sPattern, Null)
     Set FetchCommand = m_oCmd
@@ -278,7 +283,7 @@ Private Function pvGetFetchSql() As String
 
     Set cSql = New Collection
     cSql.Add "SET NOCOUNT ON"
-    cSql.Add "DECLARE @file NVARCHAR(260) = ?, @offset BIGINT = ?, @dropped BIGINT = ?, @full INT = ?, @system INT = ?, @path NVARCHAR(260) = ?, @pattern NVARCHAR(260) = ?"
+    cSql.Add "DECLARE @file NVARCHAR(260) = ?, @offset BIGINT = ?, @dropped BIGINT = ?, @full INT = ?, @system INT = ?, @statements INT = ?, @path NVARCHAR(260) = ?, @pattern NVARCHAR(260) = ?"
     cSql.Add "DECLARE @cur_dropped BIGINT, @since DATETIME2 = DATEADD(MINUTE, -5, SYSUTCDATETIME())"
     cSql.Add "DECLARE @new_file NVARCHAR(260), @new_offset BIGINT, @lost INT = 0, @stale INT = 0"
     cSql.Add "SELECT @cur_dropped = dropped_event_count FROM sys.dm_xe_sessions WHERE name = N'" & STR_SESSION_NAME & "'"
@@ -330,6 +335,9 @@ Private Function pvGetFetchSql() As String
     cSql.Add "        e.value('(data[@name=""message""]/value)[1]', 'NVARCHAR(4000)') AS message"
     cSql.Add "INTO    #ev"
     cSql.Add "FROM    #x r CROSS APPLY r.x.nodes('/event') n(e)"
+    '--- the shared session collects statements for whoever traces them
+    cSql.Add "IF @statements = 0"
+    cSql.Add "    DELETE #ev WHERE event_name = N'sp_statement_completed'"
     '--- OBJECT_NAME per event row is very slow so resolve each distinct object once
     cSql.Add "DROP TABLE IF EXISTS #obj"
     cSql.Add "SELECT DISTINCT object_id, source_database_id, CAST(NULL AS NVARCHAR(256)) AS object_name INTO #obj FROM #ev WHERE object_name IS NULL AND object_id IS NOT NULL"
