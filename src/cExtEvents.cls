@@ -38,6 +38,9 @@ Private Const ERR_SQL_XE_STARTED        As Long = 25705
 
 Private m_oConn                     As ADODB.Connection
 Private m_oCmd                      As ADODB.Command
+Private m_sPath                     As String
+Private m_sPattern                  As String
+Private m_bPathStale                As Boolean
 Private m_vFile                     As Variant
 Private m_vOffset                   As Variant
 Private m_vDropped                  As Variant
@@ -73,6 +76,7 @@ Public Sub Init(oConn As ADODB.Connection)
         Err.Raise vbObjectError, , "Cannot lock " & STR_SESSION_NAME & " event session (" & lResult & ")"
     End If
     pvEnsureSession
+    pvReadTargetPath
     If m_oCmd Is Nothing Then
         Set m_oCmd = New ADODB.Command
         m_oCmd.CommandText = pvGetFetchSql()
@@ -81,6 +85,8 @@ Public Sub Init(oConn As ADODB.Connection)
         m_oCmd.Parameters.Append pvCreateDecimalParam("dropped")
         m_oCmd.Parameters.Append m_oCmd.CreateParameter("full", adInteger, adParamInput)
         m_oCmd.Parameters.Append m_oCmd.CreateParameter("system", adInteger, adParamInput)
+        m_oCmd.Parameters.Append m_oCmd.CreateParameter("path", adVarWChar, adParamInput, 260)
+        m_oCmd.Parameters.Append m_oCmd.CreateParameter("pattern", adVarWChar, adParamInput, 260)
         m_vFile = Null
         m_vOffset = Null
         m_vDropped = 0
@@ -89,39 +95,35 @@ Public Sub Init(oConn As ADODB.Connection)
     m_oCmd.CommandTimeout = 30
 End Sub
 
-'--- releases the shared lock and drops the session when no other monitor holds it
-Public Sub Shutdown()
-    Const FUNC_NAME     As String = "Shutdown"
+'--- drops the session when no other monitor holds the shared lock. Runs on a connection of
+'--- its own as the monitoring one may still be busy, its close already released this lock
+Public Sub DropIfLast(sConnectString As String)
+    Const FUNC_NAME     As String = "DropIfLast"
+    Dim oConn           As ADODB.Connection
 
     On Error GoTo EH
-    If m_oConn Is Nothing Then
-        Exit Sub
-    End If
-    If m_oConn.State = adStateOpen Then
-        m_oConn.Execute "SET NOCOUNT ON" & vbCrLf & _
-            "DECLARE @rc INT" & vbCrLf & _
-            "BEGIN TRY" & vbCrLf & _
-            "    EXEC master.sys.sp_releaseapplock @Resource = N'" & STR_SESSION_NAME & "', @LockOwner = 'Session'" & vbCrLf & _
-            "END TRY BEGIN CATCH END CATCH" & vbCrLf & _
-            "EXEC @rc = master.sys.sp_getapplock @Resource = N'" & STR_SESSION_NAME & "', @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 1000" & vbCrLf & _
-            "IF @rc >= 0" & vbCrLf & _
-            "BEGIN" & vbCrLf & _
-            "    BEGIN TRY" & vbCrLf & _
-            "        DROP EVENT SESSION [" & STR_SESSION_NAME & "] ON SERVER" & vbCrLf & _
-            "    END TRY" & vbCrLf & _
-            "    BEGIN CATCH" & vbCrLf & _
-            "        IF ERROR_NUMBER() <> " & ERR_SQL_XE_NOT_FOUND & " THROW" & vbCrLf & _
-            "    END CATCH" & vbCrLf & _
-            "    EXEC master.sys.sp_releaseapplock @Resource = N'" & STR_SESSION_NAME & "', @LockOwner = 'Session'" & vbCrLf & _
-            "END", , adExecuteNoRecords
-    End If
     Set m_oCmd = Nothing
     Set m_oConn = Nothing
+    Set oConn = New ADODB.Connection
+    oConn.ConnectionTimeout = 5
+    oConn.Open sConnectString
+    oConn.Execute "SET NOCOUNT ON" & vbCrLf & _
+        "DECLARE @rc INT" & vbCrLf & _
+        "EXEC @rc = master.sys.sp_getapplock @Resource = N'" & STR_SESSION_NAME & "', @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 1000" & vbCrLf & _
+        "IF @rc >= 0" & vbCrLf & _
+        "BEGIN" & vbCrLf & _
+        "    BEGIN TRY" & vbCrLf & _
+        "        DROP EVENT SESSION [" & STR_SESSION_NAME & "] ON SERVER" & vbCrLf & _
+        "    END TRY" & vbCrLf & _
+        "    BEGIN CATCH" & vbCrLf & _
+        "        IF ERROR_NUMBER() <> " & ERR_SQL_XE_NOT_FOUND & " THROW" & vbCrLf & _
+        "    END CATCH" & vbCrLf & _
+        "    EXEC master.sys.sp_releaseapplock @Resource = N'" & STR_SESSION_NAME & "', @LockOwner = 'Session'" & vbCrLf & _
+        "END", , adExecuteNoRecords
+    oConn.Close
     Exit Sub
 EH:
     PrintError FUNC_NAME
-    Set m_oCmd = Nothing
-    Set m_oConn = Nothing
 End Sub
 
 '--- the per-tick batch returning info, sessions snapshot, live requests and new events
@@ -129,11 +131,17 @@ Public Function FetchCommand(ByVal bSystem As Boolean) As ADODB.Command
     Dim bFull           As Boolean
 
     bFull = (TimerEx - m_dblLastFull > DBL_RESYNC_INTERVAL)
+    '--- the target is asked again only when the batch could not read the file it was given
+    If m_bPathStale Or LenB(m_sPath) = 0 Then
+        pvReadTargetPath
+    End If
     m_oCmd.Parameters("file").Value = m_vFile
     m_oCmd.Parameters("offset").Value = m_vOffset
     m_oCmd.Parameters("dropped").Value = m_vDropped
     m_oCmd.Parameters("full").Value = IIf(bFull, 1, 0)
     m_oCmd.Parameters("system").Value = IIf(bSystem, 1, 0)
+    m_oCmd.Parameters("path").Value = IIf(LenB(m_sPath) <> 0, m_sPath, Null)
+    m_oCmd.Parameters("pattern").Value = IIf(LenB(m_sPattern) <> 0, m_sPattern, Null)
     Set FetchCommand = m_oCmd
 End Function
 
@@ -178,11 +186,13 @@ Friend Function frReadInfo(rs As Recordset, bFull As Boolean, lLost As Long) As 
     If C_Lng(rs!is_missing.Value) <> 0 Then
         '--- someone dropped the session while it was in use, start over
         pvEnsureSession
+        m_bPathStale = True
         m_vFile = Null
         m_vOffset = Null
         m_vDropped = 0
         Exit Function
     End If
+    m_bPathStale = (C_Lng(rs!is_stale.Value) <> 0)
     m_vFile = rs!file_name.Value
     m_vOffset = rs!file_offset.Value
     m_vDropped = rs!dropped.Value
@@ -242,18 +252,36 @@ Private Sub pvEnsureSession()
     m_oConn.Execute ConcatCollection(cSql), , adExecuteNoRecords
 End Sub
 
+Private Sub pvReadTargetPath()
+    Dim rs              As Recordset
+    Dim lPos            As Long
+
+    m_sPath = vbNullString
+    m_sPattern = vbNullString
+    m_bPathStale = False
+    Set rs = m_oConn.Execute("SELECT CAST(t.target_data AS XML).value('(EventFileTarget/File/@name)[1]', 'NVARCHAR(260)')" & vbCrLf & _
+        "FROM sys.dm_xe_sessions s JOIN sys.dm_xe_session_targets t ON t.event_session_address = s.address" & vbCrLf & _
+        "WHERE s.name = N'" & STR_SESSION_NAME & "' AND t.target_name = N'event_file'")
+    If Not rs.EOF Then
+        m_sPath = C_Str(rs.Fields(0).Value)
+    End If
+    '--- with ODBC an unread result makes the next command run on a hidden connection
+    rs.Close
+    lPos = InStrRev(m_sPath, "\")
+    If lPos > 0 Then
+        m_sPattern = Left$(m_sPath, lPos) & STR_SESSION_NAME & "*.xel"
+    End If
+End Sub
+
 Private Function pvGetFetchSql() As String
     Dim cSql            As Collection
 
     Set cSql = New Collection
     cSql.Add "SET NOCOUNT ON"
-    cSql.Add "DECLARE @file NVARCHAR(260) = ?, @offset BIGINT = ?, @dropped BIGINT = ?, @full INT = ?, @system INT = ?"
-    cSql.Add "DECLARE @path NVARCHAR(260), @pattern NVARCHAR(260), @cur_dropped BIGINT, @since DATETIME2 = DATEADD(MINUTE, -5, SYSUTCDATETIME())"
-    cSql.Add "DECLARE @new_file NVARCHAR(260), @new_offset BIGINT, @lost INT = 0"
-    cSql.Add "SELECT  @path = CAST(t.target_data AS XML).value('(EventFileTarget/File/@name)[1]', 'NVARCHAR(260)'), @cur_dropped = s.dropped_event_count"
-    cSql.Add "FROM    sys.dm_xe_sessions s JOIN sys.dm_xe_session_targets t ON t.event_session_address = s.address"
-    cSql.Add "WHERE   s.name = N'" & STR_SESSION_NAME & "' AND t.target_name = N'event_file'"
-    cSql.Add "SET @pattern = LEFT(@path, LEN(@path) - CHARINDEX(N'\', REVERSE(@path)) + 1) + N'" & STR_SESSION_NAME & "*.xel'"
+    cSql.Add "DECLARE @file NVARCHAR(260) = ?, @offset BIGINT = ?, @dropped BIGINT = ?, @full INT = ?, @system INT = ?, @path NVARCHAR(260) = ?, @pattern NVARCHAR(260) = ?"
+    cSql.Add "DECLARE @cur_dropped BIGINT, @since DATETIME2 = DATEADD(MINUTE, -5, SYSUTCDATETIME())"
+    cSql.Add "DECLARE @new_file NVARCHAR(260), @new_offset BIGINT, @lost INT = 0, @stale INT = 0"
+    cSql.Add "SELECT @cur_dropped = dropped_event_count FROM sys.dm_xe_sessions WHERE name = N'" & STR_SESSION_NAME & "'"
     cSql.Add "DROP TABLE IF EXISTS #raw"
     cSql.Add "CREATE TABLE #raw (file_name NVARCHAR(260), file_offset BIGINT, event_data NVARCHAR(MAX))"
     '--- reading from a position returns only the buffers after it
@@ -265,11 +293,15 @@ Private Function pvGetFetchSql() As String
     cSql.Add "    SELECT @file = NULL, @lost = 1"
     cSql.Add "END CATCH"
     '--- first read takes only the current file and only its recent events
+    '--- a stale path is reported back, so the next fetch asks the target again
     cSql.Add "IF @path IS NOT NULL AND @file IS NULL"
-    cSql.Add "BEGIN"
+    cSql.Add "BEGIN TRY"
     cSql.Add "    INSERT #raw SELECT file_name, file_offset, IIF(timestamp_utc >= @since, event_data, NULL) FROM sys.fn_xe_file_target_read_file(@path, NULL, NULL, NULL)"
     cSql.Add "    SELECT @full = 1, @dropped = @cur_dropped"
-    cSql.Add "END"
+    cSql.Add "END TRY"
+    cSql.Add "BEGIN CATCH"
+    cSql.Add "    SET @stale = 1"
+    cSql.Add "END CATCH"
     '--- parse each event once, .value() on CAST in an APPLY parses it again for every column
     cSql.Add "DROP TABLE IF EXISTS #x"
     cSql.Add "CREATE TABLE #x (file_name NVARCHAR(260), file_offset BIGINT, x XML)"
@@ -312,7 +344,7 @@ Private Function pvGetFetchSql() As String
     cSql.Add "SELECT  @new_file AS file_name, CAST(@new_offset AS DECIMAL(19, 0)) AS file_offset,"
     cSql.Add "        CAST(ISNULL(@cur_dropped, 0) AS DECIMAL(19, 0)) AS dropped,"
     cSql.Add "        CAST(IIF(@cur_dropped > @dropped, @cur_dropped - @dropped, 0) + @lost AS INT) AS lost,"
-    cSql.Add "        @full AS is_full, IIF(@path IS NULL, 1, 0) AS is_missing"
+    cSql.Add "        @full AS is_full, IIF(@cur_dropped IS NULL, 1, 0) AS is_missing, @stale AS is_stale"
     '--- 2. sessions snapshot, all on full resync otherwise only those with new events or a running request
     cSql.Add "SELECT  s.session_id AS SPID, s.status AS Status, s.login_name AS Login, s.host_name AS Host,"
     cSql.Add "        DB_NAME(s.database_id) AS DB, LEFT(s.program_name, 120) AS Program, s.cpu_time AS CPU,"

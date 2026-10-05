@@ -1,5 +1,5 @@
 VERSION 5.00
-Begin VB.UserControl ctxTreeView 
+Begin VB.UserControl ctxTreeView
    ClientHeight    =   2880
    ClientLeft      =   0
    ClientTop       =   0
@@ -31,10 +31,12 @@ Private Const STR_MODULE_NAME As String = "ctxTreeView"
 '=========================================================================
 
 Event NodeClick(ByVal hItem As LongPtr)
+Event DblClick()
 Event KeyDown(KeyCode As Integer, Shift As Integer)
 Event MouseDown(Button As Integer, Shift As Integer, X As Single, Y As Single)
 Event PreviewKeyDown(wParam As Long, lParam As Long, Cancel As Boolean)
 Event ItemPrePaint(ByVal hItem As LongPtr, Color As OLE_COLOR, Handled As Boolean)
+Event BeforeCollapse(ByVal hItem As LongPtr, Cancel As Boolean)
 
 '=========================================================================
 ' Constants and member variables
@@ -268,8 +270,9 @@ Public Function SubclassProc( _
         If pvCustomDraw(lParam, lRetVal) Then
             SubclassProc = lRetVal
             Handled = True
-        Else
-            pvNotify lParam
+        ElseIf pvNotify(lParam, lRetVal) Then
+            SubclassProc = lRetVal
+            Handled = True
         End If
     Case WM_SETFOCUS
         If hWnd <> m_hTree Then
@@ -358,29 +361,42 @@ Private Function pvCustomDraw(ByVal lParam As Long, lReturn As Long) As Boolean
     End Select
 End Function
 
-Private Sub pvNotify(ByVal lParam As Long)
+'--- True when the notification needs an answer, which the caller returns
+Private Function pvNotify(ByVal lParam As Long, lReturn As Long) As Boolean
     Dim uHdr            As NMHDR
     Dim uTree           As NMTREEVIEW
     Dim uKey            As NMLVKEYDOWN
     Dim nKeyCode        As Integer
+    Dim bCancel         As Boolean
 
     Call CopyMemory(uHdr, ByVal lParam, LenB(uHdr))
     If uHdr.hWndFrom <> m_hTree Then
-        Exit Sub
+        Exit Function
     End If
     Select Case uHdr.Code
+    Case TVN_ITEMEXPANDING, TVN_ITEMEXPANDINGW
+        Call CopyMemory(uTree, ByVal lParam, LenB(uTree))
+        If (uTree.Action And TVE_COLLAPSE) <> 0 Then
+            RaiseEvent BeforeCollapse(uTree.itemNew.hItem, bCancel)
+            If bCancel Then
+                lReturn = 1
+                pvNotify = True
+            End If
+        End If
     Case TVN_SELCHANGED, TVN_SELCHANGEDW
         If Not m_bNoClickEvent Then
             Call CopyMemory(uTree, ByVal lParam, LenB(uTree))
             RaiseEvent NodeClick(uTree.itemNew.hItem)
         End If
+    Case NM_DBLCLK
+        RaiseEvent DblClick
     Case TVN_KEYDOWN
         '--- NMTVKEYDOWN is packed, so copy only as far as the key code
         Call CopyMemory(uKey, ByVal lParam, LenB(uHdr) + 2)
         nKeyCode = uKey.wVKey
         RaiseEvent KeyDown(nKeyCode, pvGetShiftState())
     End Select
-End Sub
+End Function
 
 Private Sub pvRaiseMouseDown(ByVal lMsg As Long, ByVal lParam As Long)
     Dim nButton         As Integer

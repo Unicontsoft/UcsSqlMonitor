@@ -1,5 +1,5 @@
 VERSION 5.00
-Begin VB.Form frmMain 
+Begin VB.Form frmMain
    Caption         =   "Ucs DB Monitor"
    ClientHeight    =   5988
    ClientLeft      =   192
@@ -10,7 +10,7 @@ Begin VB.Form frmMain
    ScaleHeight     =   5988
    ScaleWidth      =   9300
    StartUpPosition =   3  'Windows Default
-   Begin VB.PictureBox picSplitter 
+   Begin VB.PictureBox picSplitter
       BorderStyle     =   0  'None
       Height          =   3540
       Left            =   4032
@@ -22,7 +22,7 @@ Begin VB.Form frmMain
       Top             =   924
       Width           =   96
    End
-   Begin UcsSQLMonitor.ctxListView lvwMain 
+   Begin UcsSQLMonitor.ctxListView lvwMain
       Height          =   4632
       Left            =   336
       TabIndex        =   1
@@ -73,13 +73,13 @@ Begin VB.Form frmMain
          Strikethrough   =   0   'False
       EndProperty
    End
-   Begin VB.Timer tmrFetch 
+   Begin VB.Timer tmrFetch
       Enabled         =   0   'False
       Interval        =   200
       Left            =   6216
       Top             =   5208
    End
-   Begin VB.TextBox txtInput 
+   Begin VB.TextBox txtInput
       BeginProperty Font 
          Name            =   "Consolas"
          Size            =   7.8
@@ -97,49 +97,66 @@ Begin VB.Form frmMain
       Top             =   336
       Width           =   4128
    End
-   Begin VB.Menu mnuMain 
+   Begin VB.Menu mnuMain
       Caption         =   "File"
       Index           =   0
-      Begin VB.Menu mnuFile 
+      Begin VB.Menu mnuFile
          Caption         =   "Connect"
          Index           =   0
          Shortcut        =   ^{F2}
       End
-      Begin VB.Menu mnuFile 
+      Begin VB.Menu mnuFile
          Caption         =   "Filter"
          Index           =   1
          Shortcut        =   ^F
       End
-      Begin VB.Menu mnuFile 
+      Begin VB.Menu mnuFile
          Caption         =   "Statistics"
          Index           =   2
          Shortcut        =   {F6}
       End
-      Begin VB.Menu mnuFile 
+      Begin VB.Menu mnuFile
          Caption         =   "-"
          Index           =   3
       End
-      Begin VB.Menu mnuFile 
+      Begin VB.Menu mnuFile
          Caption         =   "Exit"
          Index           =   4
       End
    End
-   Begin VB.Menu mnuMain 
+   Begin VB.Menu mnuMain
       Caption         =   "Help"
       Index           =   1
-      Begin VB.Menu mnuHelp 
+      Begin VB.Menu mnuHelp
          Caption         =   "About"
          Index           =   0
       End
    End
-   Begin VB.Menu mnuMain 
+   Begin VB.Menu mnuMain
       Caption         =   "Popup"
       Index           =   2
       Visible         =   0   'False
-      Begin VB.Menu mnuPopup 
+      Begin VB.Menu mnuPopup
          Caption         =   "Kill"
          Index           =   0
          Shortcut        =   ^X
+      End
+   End
+   Begin VB.Menu mnuMain
+      Caption         =   "TreePopup"
+      Index           =   3
+      Visible         =   0   'False
+      Begin VB.Menu mnuTree
+         Caption         =   "Connect..."
+         Index           =   0
+      End
+      Begin VB.Menu mnuTree
+         Caption         =   "-"
+         Index           =   1
+      End
+      Begin VB.Menu mnuTree
+         Caption         =   "Disconnect"
+         Index           =   2
       End
    End
 End
@@ -157,9 +174,6 @@ Private Const MODULE_NAME As String = "frmMain"
 
 Private Const STR_REG_COMMON        As String = "Common"
 Private Const CLR_ACTIVE            As Long = &H80FF00
-Private Const ERR_NO_MORE_RESULTS   As Long = &H40EC9
-Private Const ERR_SQL_DB_CHANGED    As Long = 5701
-Private Const ERR_SQL_LANG_CHANGED  As Long = 5703
 Private Const MSG_CONTINUE          As String = "Do you want to continue?"
 Private Const LNG_HISTORY_SIZE      As Long = 32000
 Private Const DBL_TREE_MIN_WIDTH    As Double = 300
@@ -169,34 +183,25 @@ Private Const STR_RES_PNG           As String = "CUSTOM"
 Private Const LNG_RES_SERVERS       As Long = 101
 Private Const LNG_RES_SERVER        As Long = 102
 Private Const LNG_ICON_SIZE         As Long = 16
+Private Const LNG_TICK_INTERVAL     As Long = 40
 
-Private m_oCmd              As ADODB.Command
-Private WithEvents m_oConn  As ADODB.Connection
-Attribute m_oConn.VB_VarHelpID = -1
-Private WithEvents m_rsResult As Recordset
-Attribute m_rsResult.VB_VarHelpID = -1
+Private m_cServers          As Collection
 Private m_rsList            As Recordset
 Private m_cList             As Collection
 Private m_rsListSort        As Recordset
-Private m_eMode             As UcsMonitorMode
-Private m_oExtEvents        As cExtEvents
-Private m_sServer           As String
 Private m_sFilter           As String
 Private m_bDown             As Boolean
 Private m_dblDownX          As Double
 Private m_dblRatio          As Double
 Private m_dblTreeWidth      As Double
 Private m_hTreeImages       As LongPtr
-Private m_bSystemProcesses  As Boolean
-Private m_dblCurrentSPID    As Double
+Private m_sMenuServer       As String
 Private m_rsStats           As Recordset
 Private m_cStats            As Collection
 Private WithEvents m_oFrmStats As frmStats
 Attribute m_oFrmStats.VB_VarHelpID = -1
 Private m_cSelected         As Collection
 Private m_bInSet            As Boolean
-Private m_bDelayFetch       As Boolean
-Private m_sConnectString    As String
 Private m_aColumns()        As UcsColumnInfo
 
 Private Type UcsColumnInfo
@@ -217,6 +222,9 @@ Private Enum UcsMenuIndexes
     ucsMnuHelpAbout = 0
     ucsMnuMainPopup = 2
     ucsMnuPopupKill = 0
+    ucsMnuMainTree = 3
+    ucsMnuTreeConnect = 0
+    ucsMnuTreeDisconnect = 2
 End Enum
 
 '=========================================================================
@@ -232,24 +240,26 @@ End Sub
 ' Properties
 '=========================================================================
 
-Private Property Get pvSelectedSpids() As Collection
-    Const FUNC_NAME     As String = "pvSelectedSpids [get]"
+Private Property Get pvSelectedRows() As Collection
+    Const FUNC_NAME     As String = "pvSelectedRows [get]"
     Dim lRow            As Long
     Dim lIdx            As Long
+    Dim sKey            As String
 
     On Error GoTo EH
-    Set pvSelectedSpids = New Collection
+    Set pvSelectedRows = New Collection
     lRow = lvwMain.FocusedRow
     If lRow > 0 Then
         If pvMoveToRow(lRow) Then
-            pvSelectedSpids.Add m_rsListSort!SPID.Value
+            pvSelectedRows.Add pvGetRowKey(m_rsListSort!Server.Value, m_rsListSort!SPID.Value)
         End If
     End If
     If lvwMain.SelectedCount > 0 Then
         For lIdx = 1 To lvwMain.RowCount
             If lvwMain.RowSelected(lIdx) Then
                 If pvMoveToRow(lIdx) Then
-                    pvSelectedSpids.Add m_rsListSort!SPID.Value, "#" & m_rsListSort!SPID.Value
+                    sKey = pvGetRowKey(m_rsListSort!Server.Value, m_rsListSort!SPID.Value)
+                    pvSelectedRows.Add sKey, sKey
                 End If
             End If
         Next
@@ -260,22 +270,24 @@ EH:
     Resume Next
 End Property
 
-Private Property Set pvSelectedSpids(oValue As Collection)
-    Const FUNC_NAME     As String = "pvSelectedSpids [let]"
+Private Property Set pvSelectedRows(oValue As Collection)
+    Const FUNC_NAME     As String = "pvSelectedRows [let]"
     Dim lFocus          As Long
     Dim lIdx            As Long
+    Dim sKey            As String
     Dim bSelected       As Boolean
 
     On Error GoTo EH
     If oValue.Count > 0 Then
         m_bInSet = True
-        If SearchRecordset(m_rsListSort, "SPID=" & oValue(1)) Then
-            lFocus = m_rsListSort.AbsolutePosition
-        End If
         For lIdx = 1 To lvwMain.RowCount
             bSelected = False
             If pvMoveToRow(lIdx) Then
-                bSelected = SearchCollection(oValue, "#" & m_rsListSort!SPID.Value)
+                sKey = pvGetRowKey(m_rsListSort!Server.Value, m_rsListSort!SPID.Value)
+                If sKey = oValue(1) Then
+                    lFocus = lIdx
+                End If
+                bSelected = SearchCollection(oValue, sKey)
             End If
             If lvwMain.RowSelected(lIdx) <> bSelected Then
                 lvwMain.RowSelected(lIdx) = bSelected
@@ -295,6 +307,11 @@ End Property
 '=========================================================================
 ' Methods
 '=========================================================================
+
+'--- results of one server's fetch, merged into the list every server shares
+Friend Sub frShowResults(oServer As cServerMonitor, rs As Recordset)
+    pvShowResults oServer, rs
+End Sub
 
 Private Sub pvRefreshUI()
     Const FUNC_NAME     As String = "pvRefreshUI"
@@ -342,14 +359,15 @@ End Sub
 
 Private Function pvGetFilter() As String
     If LenB(m_sFilter) <> 0 Then
-        pvGetFilter = "Program LIKE '" & Quote(m_sFilter) & "' OR DB LIKE '" & Quote(m_sFilter) & "' OR Host LIKE '" & Quote(m_sFilter) & "' OR Login LIKE '" & Quote(m_sFilter) & "' OR Status LIKE '" & Quote(m_sFilter) & "' OR Command LIKE '" & Quote(m_sFilter) & "'"
+        pvGetFilter = "Server LIKE '" & Quote(m_sFilter) & "' OR Program LIKE '" & Quote(m_sFilter) & "' OR DB LIKE '" & Quote(m_sFilter) & "' OR Host LIKE '" & Quote(m_sFilter) & "' OR Login LIKE '" & Quote(m_sFilter) & "' OR Status LIKE '" & Quote(m_sFilter) & "' OR Command LIKE '" & Quote(m_sFilter) & "'"
     Else
         pvGetFilter = vbNullString
     End If
 End Function
 
-Private Sub pvShowResults(rs As Recordset)
+Private Sub pvShowResults(oServer As cServerMonitor, rs As Recordset)
     Const FUNC_NAME     As String = "pvShowResults"
+    Dim sServer         As String
     Dim bRefreshData    As Boolean
     Dim lIter           As Long
     Dim lIdx            As Long
@@ -367,22 +385,25 @@ Private Sub pvShowResults(rs As Recordset)
     If rs.State <> adStateOpen Then
         Exit Sub
     End If
-    If m_eMode = ucsMonExtEvents Then
-        pvShowExtEvents rs
+    If oServer.Mode = ucsMonExtEvents Then
+        pvShowExtEvents oServer, rs
         Exit Sub
     End If
+    sServer = oServer.Server
     pvPrepareList
     Debug.Print "Before sync rs", TimerEx
     '--- sync rs, sp_who2 columns map to list fields by position up to REQUESTID
-    Set m_cList = InitIndexCollection(m_rsList, "SPID")
+    Set m_cList = InitIndexCollection(m_rsList, "Server", "SPID")
     Do While MoveRecordset(rs, lIter)
-        If Not SetBookmark(m_rsList, m_cList, "#" & Trim$(C_Str(rs!SPID.Value))) Then
+        sKey = pvGetRowKey(sServer, Trim$(C_Str(rs!SPID.Value)))
+        If Not SetBookmark(m_rsList, m_cList, sKey) Then
             m_rsList.AddNew
+            m_rsList!Server.Value = sServer
             m_rsList!IsActive.Value = False
             m_rsList!LastActive.Value = False
             m_rsList!SPID.Value = Trim$(C_Str(rs!SPID.Value))
-            RemoveCollection m_cList, "#" & m_rsList!SPID.Value
-            m_cList.Add m_rsList.Bookmark, "#" & m_rsList!SPID.Value
+            RemoveCollection m_cList, sKey
+            m_cList.Add m_rsList.Bookmark, sKey
         Else
             Debug.Assert C_Str(m_rsList!SPID.Value) = Trim$(C_Str(rs!SPID.Value))
         End If
@@ -416,12 +437,15 @@ Private Sub pvShowResults(rs As Recordset)
         Set cResult = InitIndexCollection(rs, "SPID")
         lIter = 0
         Do While MoveRecordset(m_rsList, lIter)
+            If C_Str(m_rsList!Server.Value) <> sServer Then
+                GoTo LoopNext
+            End If
             sKey = C_Str(m_rsList!Host.Value) & "#" & C_Str(m_rsList!Login.Value) & "#" & C_Str(m_rsList!DB.Value)
             If Not SetBookmark(m_rsStats, m_cStats, sKey) Then
                 m_rsStats.AddNew Array("Host", "Login", "DB", "SPID", "Opers"), Array(C_Str(m_rsList!Host.Value), C_Str(m_rsList!Login.Value), C_Str(m_rsList!DB.Value), m_rsList!SPID.Value, 1)
                 m_cStats.Add m_rsStats.Bookmark, sKey
             End If
-            If (m_rsList!SPID.Value > 50 And LCase$(C_Str(m_rsList!Status.Value)) <> "background" And LCase$(C_Str(m_rsList!Command.Value)) <> "task manager") Or m_bSystemProcesses Then
+            If (m_rsList!SPID.Value > 50 And LCase$(C_Str(m_rsList!Status.Value)) <> "background" And LCase$(C_Str(m_rsList!Command.Value)) <> "task manager") Or oServer.SystemProcesses Then
                 If Not cResult Is Nothing Then
                     If Not SetBookmark(rs, cResult, "#" & C_Str(m_rsList!SPID.Value)) Then
                         m_rsList.Delete
@@ -448,7 +472,7 @@ Private Sub pvShowResults(rs As Recordset)
                 End If
                 m_rsList!LastActive.Value = m_rsList!IsActive.Value
             Else
-                RemoveCollection m_cList, "#" & C_Str(m_rsList!SPID.Value)
+                RemoveCollection m_cList, pvGetRowKey(sServer, m_rsList!SPID.Value)
                 m_rsList.Delete
             End If
 LoopNext:
@@ -461,7 +485,7 @@ EH:
         Exit Sub
         Resume
     End If
-    tmrFetch.Enabled = False
+    pvDisconnect oServer.Server
 End Sub
 
 Private Sub pvPrepareList()
@@ -486,9 +510,10 @@ Private Sub pvPrepareList()
             "Input_Buffer2", adBSTR, _
             "IsActive", adBoolean, _
             "LastActive", adBoolean, _
-            "LoginTime", adDate)
+            "LoginTime", adDate, _
+            "Server", adVarWChar, 128)
         Set m_rsListSort = m_rsList.Clone
-        m_rsListSort.Sort = "DB, Login, Host, SPID"
+        m_rsListSort.Sort = "Server, DB, Login, Host, SPID"
         m_rsListSort.Filter = pvGetFilter
     Else
         sSort = m_rsListSort.Sort
@@ -521,7 +546,7 @@ Private Sub pvRefreshList(ByVal bRefreshData As Boolean, ByVal bRefreshStats As 
         bRefreshData = True
     End If
     If bRefreshData Then
-        Set pvSelectedSpids = m_cSelected
+        Set pvSelectedRows = m_cSelected
         pvRefreshUI
     End If
     lvwMain.Redraw = True
@@ -530,13 +555,15 @@ Private Sub pvRefreshList(ByVal bRefreshData As Boolean, ByVal bRefreshStats As 
     End If
 End Sub
 
-Private Sub pvShowExtEvents(rs As Recordset)
+Private Sub pvShowExtEvents(oServer As cServerMonitor, rs As Recordset)
     Const FUNC_NAME     As String = "pvShowExtEvents"
+    Dim sServer         As String
     Dim bFull           As Boolean
     Dim lLost           As Long
     Dim rsSnap          As Recordset
     Dim lIter           As Long
     Dim sKey            As String
+    Dim sRowKey         As String
     Dim bRefreshData    As Boolean
     Dim cSeen           As Collection
     Dim vField          As Variant
@@ -548,23 +575,26 @@ Private Sub pvShowExtEvents(rs As Recordset)
     Dim bRefreshStats   As Boolean
 
     On Error GoTo EH
-    If Not m_oExtEvents.frReadInfo(rs, bFull, lLost) Then
+    sServer = oServer.Server
+    If Not oServer.ExtEvents.frReadInfo(rs, bFull, lLost) Then
         Exit Sub
     End If
     pvPrepareList
-    Set m_cList = InitIndexCollection(m_rsList, "SPID")
+    Set m_cList = InitIndexCollection(m_rsList, "Server", "SPID")
     '--- 2. sessions snapshot, only a full one has every SPID so missing ones are gone
     Set rsSnap = rs.NextRecordset
     Set cSeen = New Collection
     Do While MoveRecordset(rsSnap, lIter)
         sKey = "#" & rsSnap!SPID.Value
-        If Not SetBookmark(m_rsList, m_cList, sKey) Then
+        sRowKey = pvGetRowKey(sServer, rsSnap!SPID.Value)
+        If Not SetBookmark(m_rsList, m_cList, sRowKey) Then
             m_rsList.AddNew
+            m_rsList!Server.Value = sServer
             m_rsList!SPID.Value = rsSnap!SPID.Value
             m_rsList!IsActive.Value = False
             m_rsList!LastActive.Value = False
-            RemoveCollection m_cList, sKey
-            m_cList.Add m_rsList.Bookmark, sKey
+            RemoveCollection m_cList, sRowKey
+            m_cList.Add m_rsList.Bookmark, sRowKey
             bRefreshData = True
         ElseIf C_Str(m_rsList!LoginTime.Value) <> C_Str(rsSnap!LoginTime.Value) Then
             '--- same SPID reused by a new session
@@ -588,8 +618,8 @@ Private Sub pvShowExtEvents(rs As Recordset)
     lIter = 0
     Do While MoveRecordset(rsEvents, lIter)
         sKey = "#" & rsEvents!SPID.Value
-        If SetBookmark(m_rsList, m_cList, sKey) Then
-            m_rsList!Input_Buffer2.Value = Right$(C_Str(m_rsList!Input_Buffer2.Value) & m_oExtEvents.FormatEvent(rsEvents), LNG_HISTORY_SIZE)
+        If SetBookmark(m_rsList, m_cList, pvGetRowKey(sServer, rsEvents!SPID.Value)) Then
+            m_rsList!Input_Buffer2.Value = Right$(C_Str(m_rsList!Input_Buffer2.Value) & oServer.ExtEvents.FormatEvent(rsEvents), LNG_HISTORY_SIZE)
             RemoveCollection cActive, sKey
             cActive.Add True, sKey
             bRefreshData = True
@@ -597,9 +627,12 @@ Private Sub pvShowExtEvents(rs As Recordset)
     Loop
     lIter = 0
     Do While MoveRecordset(m_rsList, lIter)
+        If C_Str(m_rsList!Server.Value) <> sServer Then
+            GoTo LoopNext
+        End If
         sKey = "#" & m_rsList!SPID.Value
         If bFull And Not SearchCollection(cSeen, sKey) Then
-            RemoveCollection m_cList, sKey
+            RemoveCollection m_cList, pvGetRowKey(sServer, m_rsList!SPID.Value)
             m_rsList.Delete
             bRefreshData = True
         Else
@@ -641,6 +674,7 @@ Private Sub pvShowExtEvents(rs As Recordset)
                 bRefreshStats = True
             End If
         End If
+LoopNext:
     Loop
     pvRefreshList bRefreshData, bRefreshStats
     Exit Sub
@@ -672,55 +706,251 @@ Private Function pvUpdateStats() As Boolean
     m_rsList!LastActive.Value = m_rsList!IsActive.Value
 End Function
 
-Private Function pvInitExtEvents() As Boolean
-    On Error GoTo EH
-    Set m_oExtEvents = New cExtEvents
-    m_oExtEvents.Init m_oConn
-    pvInitExtEvents = True
-    Exit Function
-EH:
-    MsgBox "Cannot start Extended Events session: " & Error, vbExclamation
-    Set m_oExtEvents = Nothing
+Private Function pvGetRowKey(ByVal sServer As String, ByVal vSpid As Variant) As String
+    pvGetRowKey = "#" & sServer & "#" & C_Str(vSpid)
 End Function
 
-Private Sub pvShutdownExtEvents()
-    If Not m_oExtEvents Is Nothing Then
-        '--- an open result keeps the connection busy and ODBC would run the shutdown on a hidden connection
-        pvCloseResult
-        m_oExtEvents.Shutdown
-        Set m_oExtEvents = Nothing
+Private Sub pvConnect()
+    Const FUNC_NAME     As String = "pvConnect"
+    Dim oFrmConnect     As frmConnect
+    Dim oCmd            As ADODB.Command
+    Dim eMode           As UcsMonitorMode
+    Dim lRefreshRate    As Long
+    Dim bSystemProcesses As Boolean
+    Dim sConnectString  As String
+    Dim sServer         As String
+
+    On Error GoTo EH
+    Set oFrmConnect = New frmConnect
+    If oFrmConnect.frInit(oCmd, eMode, lRefreshRate, bSystemProcesses, sConnectString, sServer) Then
+        pvAddServer sServer, oCmd, eMode, lRefreshRate, bSystemProcesses, sConnectString
     End If
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
-Private Sub pvCloseResult()
-    On Error GoTo QH
-    If m_rsResult Is Nothing Then
+'--- a server of a saved profile, connected without the dialog
+Private Sub pvConnectProfile(sServer As String)
+    Const FUNC_NAME     As String = "pvConnectProfile"
+    Dim oFrmConnect     As frmConnect
+    Dim oCmd            As ADODB.Command
+    Dim eMode           As UcsMonitorMode
+    Dim lRefreshRate    As Long
+    Dim bSystemProcesses As Boolean
+    Dim sConnectString  As String
+
+    On Error GoTo EH
+    Screen.MousePointer = vbHourglass
+    Set oFrmConnect = New frmConnect
+    If oFrmConnect.frConnectProfile(sServer, oCmd, eMode, lRefreshRate, bSystemProcesses, sConnectString) Then
+        pvAddServer sServer, oCmd, eMode, lRefreshRate, bSystemProcesses, sConnectString
+    End If
+    Screen.MousePointer = vbDefault
+    Exit Sub
+EH:
+    Screen.MousePointer = vbDefault
+    PrintError FUNC_NAME
+    Resume Next
+End Sub
+
+Private Sub pvAddServer( _
+            sServer As String, _
+            oCmd As ADODB.Command, _
+            ByVal eMode As UcsMonitorMode, _
+            ByVal lRefreshRate As Long, _
+            ByVal bSystemProcesses As Boolean, _
+            sConnectString As String)
+    Const FUNC_NAME     As String = "pvAddServer"
+    Dim oServer         As cServerMonitor
+    Dim oOther          As cServerMonitor
+
+    On Error GoTo EH
+    Set oServer = New cServerMonitor
+    If Not pvInitServer(oServer, oCmd, eMode, lRefreshRate, bSystemProcesses, sConnectString, sServer) Then
         Exit Sub
     End If
-    If (m_rsResult.State And (adStateExecuting Or adStateFetching)) <> 0 Then
-        m_rsResult.Cancel
+    If SearchCollection(m_cServers, LCase$(oServer.Server), RetVal:=oOther) Then
+        If oOther.Connected Then
+            MsgBox oServer.Server & " is already connected", vbExclamation
+            oServer.Shutdown
+            Exit Sub
+        End If
+        '--- a disconnected one in the tree is replaced, the dialog may have changed its settings
+        m_cServers.Remove LCase$(oServer.Server)
     End If
-    If (m_rsResult.State And adStateOpen) <> 0 Then
-        m_rsResult.Close
-    End If
-QH:
-    Set m_rsResult = Nothing
+    m_cServers.Add oServer, LCase$(oServer.Server)
+    pvShowServers oServer.Server
+    pvSetCaption Me
+    tmrFetch.Enabled = True
+    oServer.Tick
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
-Private Sub pvShowServer()
+Private Function pvInitServer( _
+            oServer As cServerMonitor, _
+            oCmd As ADODB.Command, _
+            ByVal eMode As UcsMonitorMode, _
+            ByVal lRefreshRate As Long, _
+            ByVal bSystemProcesses As Boolean, _
+            sConnectString As String, _
+            sServer As String) As Boolean
+    On Error GoTo EH
+    oServer.Init oCmd, eMode, lRefreshRate, bSystemProcesses, sConnectString, sServer, Me
+    pvInitServer = True
+    Exit Function
+EH:
+    MsgBox "Cannot monitor server: " & Error, vbExclamation
+    oServer.Shutdown
+End Function
+
+'--- the server's rows leave the list, it stays in the tree to be reconnected
+Private Sub pvDisconnect(sServer As String)
+    Const FUNC_NAME     As String = "pvDisconnect"
+    Dim oServer         As cServerMonitor
+    Dim lIter           As Long
+
+    On Error GoTo EH
+    If Not SearchCollection(m_cServers, LCase$(sServer), RetVal:=oServer) Then
+        Exit Sub
+    End If
+    oServer.Shutdown
+    If Not m_rsList Is Nothing Then
+        Do While MoveRecordset(m_rsList, lIter)
+            If C_Str(m_rsList!Server.Value) = sServer Then
+                m_rsList.Delete
+            End If
+        Loop
+        pvPrepareList
+        pvRefreshList True, False
+    End If
+    If Not pvHasConnected() Then
+        tmrFetch.Enabled = False
+    End If
+    pvShowServers sServer
+    pvSetCaption Me
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
+End Sub
+
+Private Sub pvReconnect(sServer As String)
+    Const FUNC_NAME     As String = "pvReconnect"
+    Dim oServer         As cServerMonitor
+
+    On Error GoTo EH
+    If Not SearchCollection(m_cServers, LCase$(sServer), RetVal:=oServer) Then
+        Exit Sub
+    End If
+    If oServer.Connected Then
+        Exit Sub
+    End If
+    Screen.MousePointer = vbHourglass
+    If Not pvReconnectServer(oServer) Then
+        Screen.MousePointer = vbDefault
+        Exit Sub
+    End If
+    Screen.MousePointer = vbDefault
+    pvShowServers sServer
+    pvSetCaption Me
+    tmrFetch.Enabled = True
+    oServer.Tick
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
+End Sub
+
+Private Function pvReconnectServer(oServer As cServerMonitor) As Boolean
+    On Error GoTo EH
+    oServer.Reconnect Me
+    pvReconnectServer = True
+    Exit Function
+EH:
+    Screen.MousePointer = vbDefault
+    MsgBox "Cannot reconnect to " & oServer.Server & ": " & Error, vbExclamation
+    oServer.Shutdown
+End Function
+
+Private Function pvIsConnected(sServer As String) As Boolean
+    Dim oServer         As cServerMonitor
+
+    If SearchCollection(m_cServers, LCase$(sServer), RetVal:=oServer) Then
+        pvIsConnected = oServer.Connected
+    End If
+End Function
+
+Private Function pvHasConnected() As Boolean
+    Dim oServer         As cServerMonitor
+
+    For Each oServer In m_cServers
+        If oServer.Connected Then
+            pvHasConnected = True
+            Exit Function
+        End If
+    Next
+End Function
+
+Private Sub pvDisconnectAll()
+    Dim oServer         As cServerMonitor
+
+    tmrFetch.Enabled = False
+    For Each oServer In m_cServers
+        oServer.Shutdown
+    Next
+    Set m_cServers = New Collection
+End Sub
+
+Private Sub pvShowServers(Optional Selected As String)
+    Dim oFrmConnect     As frmConnect
+    Dim cNames          As Collection
+    Dim oServer         As cServerMonitor
     Dim hRoot           As LongPtr
+    Dim vName           As Variant
     Dim hNode           As LongPtr
 
-    tvwServers.Clear
-    hRoot = tvwServers.AddNode(0, vbNullString, STR_TREE_ROOT, Image:=ucsImgServers)
-    If LenB(m_sServer) = 0 Then
+    Set oFrmConnect = New frmConnect
+    Set cNames = oFrmConnect.frGetServers()
+    For Each oServer In m_cServers
+        If Not pvContainsText(cNames, oServer.Server) Then
+            cNames.Add oServer.Server
+        End If
+    Next
+    '--- updated in place, rebuilding it inside a tree notification upsets the tree
+    hRoot = tvwServers.GetRootNode()
+    If hRoot = 0 Then
+        hRoot = tvwServers.AddNode(0, vbNullString, STR_TREE_ROOT, Image:=ucsImgServers)
         tvwServers.SelectedNode = hRoot
-        Exit Sub
     End If
-    hNode = tvwServers.AddNode(hRoot, m_sServer, m_sServer, Image:=ucsImgServer)
-    tvwServers.NodeBold(hNode) = True
-    tvwServers.SelectedNode = hNode
+    For Each vName In cNames
+        If LenB(vName) <> 0 Then
+            hNode = tvwServers.NodeByKey(vName)
+            If hNode = 0 Then
+                hNode = tvwServers.AddNode(hRoot, vName, vName, Image:=ucsImgServer)
+            End If
+            tvwServers.NodeBold(hNode) = pvIsConnected(C_Str(vName))
+            If LCase$(vName) = LCase$(Selected) Then
+                tvwServers.SelectedNode = hNode
+            End If
+        End If
+    Next
 End Sub
+
+Private Function pvContainsText(cItems As Collection, sText As String) As Boolean
+    Dim vItem           As Variant
+
+    For Each vItem In cItems
+        If LCase$(vItem) = LCase$(sText) Then
+            pvContainsText = True
+            Exit Function
+        End If
+    Next
+End Function
 
 Private Sub pvInitTreeImages()
     Const FUNC_NAME     As String = "pvInitTreeImages"
@@ -750,7 +980,17 @@ EH:
 End Sub
 
 Private Sub pvSetCaption(oForm As VB.Form)
-    oForm.Caption = IIf(LenB(m_sFilter) <> 0, m_sFilter & " - ", vbNullString) & STR_APP_NAME & " - [" & m_sServer & "]"
+    Dim cNames          As Collection
+    Dim oServer         As cServerMonitor
+
+    Set cNames = New Collection
+    For Each oServer In m_cServers
+        If oServer.Connected Then
+            cNames.Add oServer.Server
+        End If
+    Next
+    oForm.Caption = IIf(LenB(m_sFilter) <> 0, m_sFilter & " - ", vbNullString) & STR_APP_NAME & _
+        IIf(cNames.Count > 0, " - [" & ConcatCollection(cNames, ", ") & "]", vbNullString)
 End Sub
 
 '--- positions m_rsListSort on a list row, a no-op when already there as cells of one row repaint together
@@ -772,6 +1012,7 @@ Private Function pvMoveToRow(ByVal lRow As Long) As Boolean
 End Function
 
 Private Sub pvInitColumns()
+    pvAddColumn "Server", "Server", 100
     pvAddColumn "SPID", "SPID", 48, NumberFormat:="#,##0"
     pvAddColumn "Login", "Login", 167
     pvAddColumn "Host", "Host", 83
@@ -800,23 +1041,6 @@ Private Sub pvAddColumn( _
     m_aColumns(lCount).Field = sField
     m_aColumns(lCount).NumberFormat = NumberFormat
     lvwMain.AddColumn sCaption, lWidth, Align:=Align
-End Sub
-
-Private Sub pvTestConn()
-    On Error Resume Next
-    If m_oConn.State = adStateOpen Then
-        m_oConn.Execute "SELECT @@TRANCOUNT"
-        If Err.Number <> 0 Then
-            m_oConn.Close
-        End If
-    End If
-    If m_oConn.State = adStateClosed Then
-        m_oConn.Open m_sConnectString
-        Set m_oCmd.ActiveConnection = m_oConn
-        If Not m_oExtEvents Is Nothing Then
-            m_oExtEvents.Init m_oConn
-        End If
-    End If
 End Sub
 
 '=========================================================================
@@ -930,7 +1154,6 @@ Private Sub lvwMain_RightClick(ByVal Row As Long)
     On Error GoTo EH
     If pvMoveToRow(Row) Then
         If C_Lng(m_rsListSort!SPID.Value) <> 0 Then
-            m_dblCurrentSPID = C_Lng(m_rsListSort!SPID.Value)
             PopupMenu mnuMain(ucsMnuMainPopup)
         End If
     End If
@@ -946,50 +1169,7 @@ Private Sub lvwMain_SelectionChanged()
     On Error GoTo EH
     If Not m_bInSet Then
         pvRefreshInput
-        Set m_cSelected = pvSelectedSpids
-    End If
-    Exit Sub
-EH:
-    PrintError FUNC_NAME
-    Resume Next
-End Sub
-
-Private Sub m_oConn_Disconnect(adStatus As ADODB.EventStatusEnum, ByVal pConnection As ADODB.Connection)
-    Debug.Print "m_oConn_Disconnect adStatus="; adStatus, TimerEx
-End Sub
-
-Private Sub m_oConn_ExecuteComplete(ByVal RecordsAffected As Long, ByVal pError As ADODB.Error, adStatus As ADODB.EventStatusEnum, ByVal pCommand As ADODB.Command, ByVal pRecordset As ADODB.Recordset, ByVal pConnection As ADODB.Connection)
-    Const FUNC_NAME     As String = "m_oConn_ExecuteComplete"
-    
-    On Error GoTo EH
-    Debug.Print "m_oConn_ExecuteComplete m_bDelayFetch="; m_bDelayFetch, TimerEx
-    If m_bDelayFetch Then
-        tmrFetch.Enabled = False
-        tmrFetch.Enabled = True
-    End If
-    Exit Sub
-EH:
-    PrintError FUNC_NAME
-    Resume Next
-End Sub
-
-Private Sub m_oConn_InfoMessage(ByVal pError As ADODB.Error, adStatus As ADODB.EventStatusEnum, ByVal pConnection As ADODB.Connection)
-    Const FUNC_NAME     As String = "m_oConn_InfoMessage"
-    
-    On Error GoTo EH
-    '--- ODBC passes on the login's changed database/language notices
-    Select Case pError.NativeError
-    Case ERR_SQL_DB_CHANGED, ERR_SQL_LANG_CHANGED
-        Exit Sub
-    End Select
-    If pError.Number <> ERR_NO_MORE_RESULTS Then
-        If MsgBox(pError & vbCrLf & vbCrLf & MSG_CONTINUE, vbQuestion Or vbYesNo, MODULE_NAME & "." & FUNC_NAME & "(" & Erl & ")") = vbNo Then
-            Exit Sub
-        End If
-        If Not m_bDelayFetch Then
-            tmrFetch.Enabled = False
-            tmrFetch.Enabled = True
-        End If
+        Set m_cSelected = pvSelectedRows
     End If
     Exit Sub
 EH:
@@ -1001,82 +1181,16 @@ Private Sub m_oFrmStats_BeforeClose()
     Set m_oFrmStats = Nothing
 End Sub
 
-Private Sub m_rsResult_FetchComplete(ByVal pError As ADODB.Error, adStatus As ADODB.EventStatusEnum, ByVal pRecordset As ADODB.Recordset)
-    Const FUNC_NAME     As String = "m_rsResult_FetchComplete"
-    Dim dblTimer        As Double
-    Dim rsResult        As Recordset
-    Dim bTimerDelayed   As Boolean
-    
-    On Error GoTo EH
-    dblTimer = TimerEx
-    If Not pError Is Nothing Then
-        Debug.Print "pError.Description=" & pError.Description
-        Exit Sub
-    End If
-    Set rsResult = m_rsResult
-    bTimerDelayed = m_bDelayFetch
-    m_bDelayFetch = False
-    pvShowResults rsResult
-    If bTimerDelayed Then
-        tmrFetch_Timer
-    End If
-    Debug.Print "m_rsResult_FetchComplete, Elapsed=" & Format$(TimerEx - dblTimer, "0.000"), TimerEx
-    Exit Sub
-EH:
-    PrintError FUNC_NAME
-    Resume Next
-End Sub
-
 Private Sub mnuFile_Click(Index As Integer)
     Const FUNC_NAME     As String = "mnuFile_Click"
-    Dim oFrmConnect     As New frmConnect
     Dim sFilter         As String
-    Dim lRefreshRate    As Long
-    
+
     On Error GoTo EH
     Select Case Index
     Case ucsMnuFileConnect
-        tmrFetch.Enabled = False
-        m_bDelayFetch = False
-        Set m_rsResult = Nothing
-        pvShutdownExtEvents
-        Set m_oConn = Nothing
-        If oFrmConnect.frInit(m_oCmd, m_eMode, lRefreshRate, m_bSystemProcesses, m_sConnectString) Then
-            Set m_oConn = m_oCmd.ActiveConnection
-            If m_eMode = ucsMonExtEvents Then
-                If Not pvInitExtEvents() Then
-                    Set m_oConn = Nothing
-                    m_sServer = vbNullString
-                    pvShowServer
-                    Caption = STR_APP_NAME
-                    lvwMain.RowCount = 0
-                    Exit Sub
-                End If
-            End If
-            With m_oConn.Execute("SELECT srvnetname FROM sysservers WHERE srvid = 0")
-                If Not .EOF Then
-                    m_sServer = Trim$(.Fields(0).Value)
-                Else
-                    m_sServer = m_oConn.Properties("Data Source").Value
-                End If
-            End With
-            pvSetCaption Me
-            pvShowServer
-            Set m_rsList = Nothing
-            Set m_rsListSort = Nothing
-            Set m_rsStats = Nothing
-            Set m_cStats = Nothing
-            tmrFetch.Interval = Round(1000# / lRefreshRate)
-            tmrFetch.Enabled = True
-            tmrFetch_Timer
-        Else
-            m_sServer = vbNullString
-            pvShowServer
-            Caption = STR_APP_NAME
-        End If
-        lvwMain.RowCount = 0
+        pvConnect
     Case ucsMnuFileFilter
-        sFilter = InputBox("Program Filter (use * for wildcards)", "Filter", m_sFilter)
+        sFilter = InputBox("Server, program, database, host, login, status or command (use * for wildcards)", "Filter", m_sFilter)
         If StrPtr(sFilter) <> 0 Then
             If LenB(sFilter) <> 0 And InStr(sFilter, "*") = 0 And InStr(sFilter, "_") = 0 Then
                 m_sFilter = "*" & sFilter & "*"
@@ -1096,10 +1210,6 @@ Private Sub mnuFile_Click(Index As Integer)
         End If
         m_oFrmStats.frInit m_rsStats, Me
     Case ucsMnuFileExit
-        tmrFetch.Enabled = False
-        Set m_rsResult = Nothing
-        pvShutdownExtEvents
-        Set m_oConn = Nothing
         Unload Me
     End Select
     Exit Sub
@@ -1110,7 +1220,7 @@ End Sub
 
 Private Sub mnuHelp_Click(Index As Integer)
     Const FUNC_NAME     As String = "mnuHelp_Click"
-    
+
     On Error GoTo EH
     Select Case Index
     Case ucsMnuHelpAbout
@@ -1127,14 +1237,17 @@ End Sub
 Private Sub mnuPopup_Click(Index As Integer)
     Const FUNC_NAME     As String = "mnuPopup_Click"
     Dim lIdx            As Long
-    
+    Dim oServer         As cServerMonitor
+
     On Error GoTo EH
     Select Case Index
     Case ucsMnuPopupKill
         For lIdx = 1 To lvwMain.RowCount
             If lvwMain.RowSelected(lIdx) Then
                 If pvMoveToRow(lIdx) Then
-                    m_oConn.Execute "KILL " & m_rsListSort!SPID.Value
+                    If SearchCollection(m_cServers, LCase$(C_Str(m_rsListSort!Server.Value)), RetVal:=oServer) Then
+                        oServer.KillSession m_rsListSort!SPID.Value
+                    End If
                 End If
             End If
         Next
@@ -1149,6 +1262,22 @@ EH:
     Resume Next
 End Sub
 
+Private Sub mnuTree_Click(Index As Integer)
+    Const FUNC_NAME     As String = "mnuTree_Click"
+
+    On Error GoTo EH
+    Select Case Index
+    Case ucsMnuTreeConnect
+        pvConnect
+    Case ucsMnuTreeDisconnect
+        pvDisconnect m_sMenuServer
+    End Select
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
+End Sub
+
 Private Sub picSplitter_MouseDown(Button As Integer, Shift As Integer, X As Single, Y As Single)
     m_bDown = True
     m_dblDownX = X
@@ -1156,7 +1285,7 @@ End Sub
 
 Private Sub picSplitter_MouseMove(Button As Integer, Shift As Integer, X As Single, Y As Single)
     Const FUNC_NAME     As String = "picSplitter_MouseMove"
-    
+
     On Error GoTo EH
     If Button = 0 Then
         m_bDown = False
@@ -1203,41 +1332,12 @@ End Sub
 
 Private Sub tmrFetch_Timer()
     Const FUNC_NAME     As String = "tmrFetch_Timer"
-    Dim lState          As Long
-    Dim oCmd            As ADODB.Command
+    Dim oServer         As cServerMonitor
 
     On Error GoTo EH
-    If m_rsResult Is Nothing Then
-        Set m_rsResult = New Recordset
-        m_rsResult.CursorLocation = adUseClient
-    End If
-    On Error Resume Next
-    lState = m_rsResult.State
-    If Err.Number <> 0 Then
-        Debug.Print "tmrFetch_Timer Error="; Error, TimerEx
-        pvTestConn
-    End If
-    On Error GoTo EH
-    If (lState And (adStateConnecting Or adStateExecuting Or adStateFetching)) <> 0 Then
-        m_bDelayFetch = True
-        Exit Sub
-    End If
-    If lState = adStateOpen Then
-        m_rsResult.Close
-    End If
-    If m_eMode = ucsMonExtEvents Then
-        Set oCmd = m_oExtEvents.FetchCommand(m_bSystemProcesses)
-    Else
-        Set oCmd = m_oCmd
-    End If
-    On Error Resume Next
-    m_rsResult.Open oCmd, , adOpenStatic, adLockBatchOptimistic, adAsyncExecute Or adAsyncFetch
-    If Err.Number <> 0 Then
-        Debug.Print "tmrFetch_Timer Error="; Error, TimerEx
-        pvTestConn
-    End If
-    On Error GoTo EH
-'    pvShowResults m_rsResult
+    For Each oServer In m_cServers
+        oServer.Tick
+    Next
     Exit Sub
 EH:
     PrintError FUNC_NAME
@@ -1246,9 +1346,11 @@ End Sub
 
 Private Sub Form_Load()
     Const FUNC_NAME     As String = "Form_Load"
-    
+
     On Error GoTo EH
     Set m_cSelected = New Collection
+    Set m_cServers = New Collection
+    tmrFetch.Interval = LNG_TICK_INTERVAL
     Caption = STR_APP_NAME
     App.Title = STR_APP_NAME
     WindowState = GetSetting(STR_APP_NAME, STR_REG_COMMON, "WindowState", vbNormal)
@@ -1258,13 +1360,13 @@ Private Sub Form_Load()
     pvInitColumns
     InitGdiplus
     pvInitTreeImages
-    pvShowServer
+    pvShowServers
     txtInput.Font.Size = 8
     Call SendMessage(txtInput.hWnd, EM_SETTABSTOPS, 1, 16&)
     If txtInput.Font.Name <> "Consolas" Then
         txtInput.Font.Name = "Courier New"
     End If
-    mnuFile_Click ucsMnuFileConnect
+    pvConnect
     Exit Sub
 EH:
     PrintError FUNC_NAME
@@ -1273,10 +1375,9 @@ End Sub
 
 Private Sub Form_Unload(Cancel As Integer)
     Const FUNC_NAME     As String = "Form_Unload"
-    
+
     On Error GoTo EH
-    tmrFetch.Enabled = False
-    pvShutdownExtEvents
+    pvDisconnectAll
     If WindowState <> vbMinimized Then
         Call SaveSetting(STR_APP_NAME, STR_REG_COMMON, "WindowState", WindowState)
     Else
@@ -1299,9 +1400,63 @@ EH:
     Resume Next
 End Sub
 
+Private Sub tvwServers_BeforeCollapse(ByVal hItem As LongPtr, Cancel As Boolean)
+    Const FUNC_NAME     As String = "tvwServers_BeforeCollapse"
+
+    On Error GoTo EH
+    '--- the root is static and must keep the servers in view
+    Cancel = (hItem = tvwServers.GetRootNode())
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
+End Sub
+
+Private Sub tvwServers_DblClick()
+    Const FUNC_NAME     As String = "tvwServers_DblClick"
+    Dim sServer         As String
+
+    On Error GoTo EH
+    sServer = tvwServers.NodeKey(tvwServers.SelectedNode)
+    If LenB(sServer) = 0 Then
+        Exit Sub
+    End If
+    If SearchCollection(m_cServers, LCase$(sServer)) Then
+        pvReconnect sServer
+    ElseIf Not pvIsConnected(sServer) Then
+        pvConnectProfile sServer
+    End If
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
+End Sub
+
+Private Sub tvwServers_MouseDown(Button As Integer, Shift As Integer, X As Single, Y As Single)
+    Const FUNC_NAME     As String = "tvwServers_MouseDown"
+    Dim hNode           As LongPtr
+
+    On Error GoTo EH
+    If Button <> vbRightButton Then
+        Exit Sub
+    End If
+    hNode = tvwServers.HitTest(X, Y)
+    If hNode = 0 Then
+        Exit Sub
+    End If
+    tvwServers.SelectedNode = hNode
+    m_sMenuServer = tvwServers.NodeKey(hNode)
+    mnuTree(ucsMnuTreeDisconnect).Enabled = pvIsConnected(m_sMenuServer)
+    PopupMenu mnuMain(ucsMnuMainTree)
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
+End Sub
+
 Private Sub txtInput_KeyDown(KeyCode As Integer, Shift As Integer)
     Const FUNC_NAME     As String = "txtInput_KeyDown"
-    
+
     On Error GoTo EH
     If Shift = vbCtrlMask And KeyCode = vbKeyA Then
         Call SendMessage(txtInput.hWnd, EM_SETSEL, 0, ByVal -1&)

@@ -1,5 +1,5 @@
 VERSION 5.00
-Begin VB.Form frmConnect 
+Begin VB.Form frmConnect
    BorderStyle     =   3  'Fixed Dialog
    Caption         =   "Connect"
    ClientHeight    =   4608
@@ -13,7 +13,7 @@ Begin VB.Form frmConnect
    ScaleHeight     =   4608
    ScaleWidth      =   4548
    StartUpPosition =   2  'CenterScreen
-   Begin VB.CheckBox chkSystemProcesses 
+   Begin VB.CheckBox chkSystemProcesses
       Caption         =   "Show system processes"
       Height          =   264
       Left            =   588
@@ -29,14 +29,14 @@ Begin VB.Form frmConnect
       Top             =   3528
       Width           =   3876
    End
-   Begin VB.ComboBox cobServer 
+   Begin VB.ComboBox cobServer
       Height          =   288
       Left            =   1764
       TabIndex        =   0
       Top             =   168
       Width           =   2616
    End
-   Begin VB.ComboBox cobRerfesh 
+   Begin VB.ComboBox cobRerfesh
       Height          =   288
       Left            =   1764
       Style           =   2  'Dropdown List
@@ -61,7 +61,7 @@ Begin VB.Form frmConnect
       Value           =   -1  'True
       Width           =   2616
    End
-   Begin VB.CommandButton Command2 
+   Begin VB.CommandButton Command2
       Cancel          =   -1  'True
       Caption         =   "Cancel"
       Height          =   348
@@ -70,7 +70,7 @@ Begin VB.Form frmConnect
       Top             =   4032
       Width           =   1272
    End
-   Begin VB.CommandButton Command1 
+   Begin VB.CommandButton Command1
       Caption         =   "OK"
       Default         =   -1  'True
       Height          =   348
@@ -79,21 +79,21 @@ Begin VB.Form frmConnect
       Top             =   4032
       Width           =   1272
    End
-   Begin VB.TextBox txtDB 
+   Begin VB.TextBox txtDB
       Height          =   288
       Left            =   1764
       TabIndex        =   1
       Top             =   588
       Width           =   2616
    End
-   Begin VB.TextBox txtUser 
+   Begin VB.TextBox txtUser
       Height          =   288
       Left            =   1764
       TabIndex        =   2
       Top             =   1008
       Width           =   2028
    End
-   Begin VB.TextBox txtPass 
+   Begin VB.TextBox txtPass
       Height          =   288
       IMEMode         =   3  'DISABLE
       Left            =   1764
@@ -102,7 +102,7 @@ Begin VB.Form frmConnect
       Top             =   1428
       Width           =   2028
    End
-   Begin VB.Label Label3 
+   Begin VB.Label Label3
       Caption         =   "Refresh rate:"
       Height          =   264
       Left            =   588
@@ -110,7 +110,7 @@ Begin VB.Form frmConnect
       Top             =   2772
       Width           =   1104
    End
-   Begin VB.Label Label2 
+   Begin VB.Label Label2
       Caption         =   "Type:"
       Height          =   264
       Left            =   588
@@ -118,7 +118,7 @@ Begin VB.Form frmConnect
       Top             =   1932
       Width           =   1104
    End
-   Begin VB.Label Label1 
+   Begin VB.Label Label1
       Caption         =   "SQL Server:"
       Height          =   264
       Left            =   588
@@ -126,7 +126,7 @@ Begin VB.Form frmConnect
       Top             =   168
       Width           =   1104
    End
-   Begin VB.Label labDB 
+   Begin VB.Label labDB
       Caption         =   "SQL DB:"
       Height          =   264
       Left            =   588
@@ -134,7 +134,7 @@ Begin VB.Form frmConnect
       Top             =   588
       Width           =   1104
    End
-   Begin VB.Label labUser 
+   Begin VB.Label labUser
       Caption         =   "User:"
       Height          =   264
       Left            =   588
@@ -142,7 +142,7 @@ Begin VB.Form frmConnect
       Top             =   1008
       Width           =   1104
    End
-   Begin VB.Label Label4 
+   Begin VB.Label Label4
       Caption         =   "Pass:"
       Height          =   264
       Left            =   588
@@ -243,7 +243,7 @@ End Property
 
 Private Property Let pvDisabled(ByVal bValue As Boolean)
     Dim oCtl            As Object
-    
+
     On Error Resume Next
     For Each oCtl In Controls
         Select Case LCase(TypeName(oCtl))
@@ -269,13 +269,79 @@ Friend Function frInit( _
             eMode As UcsMonitorMode, _
             lRefreshRate As Long, _
             bSystemProcesses As Boolean, _
-            sConnectString As String) As Boolean
+            sConnectString As String, _
+            sServer As String) As Boolean
     Const FUNC_NAME     As String = "frInit"
+
+    On Error GoTo EH
+    pvLoadProfiles
+    '--- show UI
+    m_bOk = False
+    Show vbModal
+    If m_bOk Then
+        pvSaveProfiles
+        Set oCmd = m_oCmd
+        eMode = m_eMode
+        lRefreshRate = m_lRefreshRate
+        bSystemProcesses = (chkSystemProcesses.Value = vbChecked)
+        sConnectString = m_sConnectString
+        sServer = cobServer.Text
+        frInit = True
+    End If
+    Unload Me
+    Exit Function
+EH:
+    PrintError FUNC_NAME
+    Resume Next
+End Function
+
+'--- connects with the server's saved profile without showing the dialog
+Friend Function frConnectProfile( _
+            sServer As String, _
+            oCmd As ADODB.Command, _
+            eMode As UcsMonitorMode, _
+            lRefreshRate As Long, _
+            bSystemProcesses As Boolean, _
+            sConnectString As String) As Boolean
+    Const FUNC_NAME     As String = "frConnectProfile"
+
+    On Error GoTo EH
+    pvLoadProfiles
+    If SearchCollection(m_cProfiles, sServer) Then
+        pvContents = pvProfile(sServer)
+        If pvOpen() Then
+            pvSaveProfiles
+            Set oCmd = m_oCmd
+            eMode = m_eMode
+            lRefreshRate = m_lRefreshRate
+            bSystemProcesses = (chkSystemProcesses.Value = vbChecked)
+            sConnectString = m_sConnectString
+            frConnectProfile = True
+        End If
+    End If
+    Unload Me
+    Exit Function
+EH:
+    PrintError FUNC_NAME
+    Resume Next
+End Function
+
+'--- the servers of the saved profiles, the last used first
+Friend Function frGetServers() As Collection
+    Dim lIdx            As Long
+
+    Set frGetServers = New Collection
+    For lIdx = C_Lng(GetSetting(STR_APP_NAME, STR_REG_CONNECT, STR_REG_COUNT, 0)) To 1 Step -1
+        frGetServers.Add pvGetServer(GetSetting(STR_APP_NAME, STR_REG_CONNECT, STR_REG_PROFILE & lIdx, vbNullString))
+    Next
+    Unload Me
+End Function
+
+Private Sub pvLoadProfiles()
     Dim vElem           As Variant
     Dim lIdx            As Long
     Dim sProfile        As String
-    
-    On Error GoTo EH
+
     '--- fill static combos
     For Each vElem In Split(STR_REFRESH_RATES, "|")
         cobRerfesh.AddItem vElem & " fps"
@@ -295,35 +361,58 @@ Friend Function frInit( _
             cobServer.ListIndex = cobServer.NewIndex
         End If
     Next
-    '--- show UI
-    m_bOk = False
-    Show vbModal
-    If m_bOk Then
-        '--- persist last profile w/ successful connection
-        pvProfile(cobServer.Text) = pvContents
-        '--- cleanup (save only last 100 profiles)
-        Do While m_cProfiles.Count > 100
-            m_cProfiles.Remove 1
-        Loop
-        '--- save profiles
-        Call SaveSetting(STR_APP_NAME, STR_REG_CONNECT, STR_REG_COUNT, m_cProfiles.Count)
-        For lIdx = 1 To m_cProfiles.Count
-            Call SaveSetting(STR_APP_NAME, STR_REG_CONNECT, STR_REG_PROFILE & lIdx, m_cProfiles(lIdx))
-        Next
-        Call SaveSetting(STR_APP_NAME, STR_REG_CONNECT, STR_REG_CURRENT, cobServer.Text)
-        Set oCmd = m_oCmd
-        eMode = m_eMode
-        lRefreshRate = m_lRefreshRate
-        bSystemProcesses = (chkSystemProcesses.Value = vbChecked)
-        sConnectString = m_sConnectString
-        '--- success
-        frInit = True
+End Sub
+
+'--- persists the profile of a successful connection, keeping only the last 100
+Private Sub pvSaveProfiles()
+    Dim lIdx            As Long
+
+    pvProfile(cobServer.Text) = pvContents
+    Do While m_cProfiles.Count > 100
+        m_cProfiles.Remove 1
+    Loop
+    Call SaveSetting(STR_APP_NAME, STR_REG_CONNECT, STR_REG_COUNT, m_cProfiles.Count)
+    For lIdx = 1 To m_cProfiles.Count
+        Call SaveSetting(STR_APP_NAME, STR_REG_CONNECT, STR_REG_PROFILE & lIdx, m_cProfiles(lIdx))
+    Next
+    Call SaveSetting(STR_APP_NAME, STR_REG_CONNECT, STR_REG_CURRENT, cobServer.Text)
+End Sub
+
+
+Private Function pvOpen() As Boolean
+    Const MIN_VERSION_EXT_EVENTS As Long = 15
+    Dim oConn           As ADODB.Connection
+    Dim sDriver         As String
+
+    On Error GoTo EH
+    Set oConn = New Connection
+    oConn.ConnectionTimeout = 5
+    '--- ODBC drivers cannot talk to SQL 2000 so sp_who2 mode keeps SQLOLEDB
+    If optExtEvents.Value Then
+        sDriver = pvGetOdbcDriver()
     End If
-    Unload Me
+    m_sConnectString = pvGetConnectString(sDriver)
+    oConn.Open m_sConnectString
+    Set m_oCmd = New ADODB.Command
+    Set m_oCmd.ActiveConnection = oConn
+    m_oCmd.CommandTimeout = 5
+    If optExtEvents.Value Then
+        If oConn.Execute("SELECT @@MICROSOFTVERSION / 0x1000000").Fields(0).Value < MIN_VERSION_EXT_EVENTS Then
+            MsgBox "Extended Events mode needs SQL Server 2019 or later. Use sp_who2 for this server.", vbExclamation
+            GoTo QH
+        End If
+        m_eMode = ucsMonExtEvents
+    Else
+        m_oCmd.CommandText = "exec sp_who2"
+        m_eMode = ucsMonSpWho2
+    End If
+    m_lRefreshRate = cobRerfesh.ItemData(cobRerfesh.ListIndex)
+    pvOpen = True
+QH:
     Exit Function
 EH:
-    PrintError FUNC_NAME
-    Resume Next
+    MsgBox cobServer.Text & ": " & Error, vbExclamation
+    GoTo QH
 End Function
 
 Private Function pvGetServer(sProfile As String) As String
@@ -365,13 +454,13 @@ Private Function pvGetConnectString(sDriver As String) As String
             IIf(LenB(txtDB.Text) <> 0, "Database=" & txtDB.Text & ";", vbNullString) & _
             IIf(LenB(txtUser.Text) <> 0, "UID={" & Replace(txtUser.Text, "}", "}}") & "};PWD={" & Replace(txtPass.Text, "}", "}}") & "};", "Trusted_Connection=Yes;") & _
             IIf(bEncrypt, "Encrypt=Yes;TrustServerCertificate=Yes;", "Encrypt=No;") & _
-            "APP=" & App.Title
+            "APP=" & App.Title & ";OLE DB Services=-2"
     Else
         pvGetConnectString = "Provider=SQLOLEDB;Data Source=" & cobServer.Text & ";" & _
             IIf(LenB(txtDB.Text) <> 0, "Initial catalog=" & txtDB.Text & ";", vbNullString) & _
             IIf(LenB(txtUser.Text) <> 0, "User ID=" & txtUser.Text & ";Password=" & txtPass.Text & ";", "Integrated security=SSPI;") & _
             IIf(bEncrypt, "Use Encryption for Data=True;", vbNullString) & _
-            "Application Name=" & App.Title
+            "Application Name=" & App.Title & ";OLE DB Services=-2"
     End If
 End Function
 
@@ -381,7 +470,7 @@ End Function
 
 Private Sub cobServer_Click()
     Const FUNC_NAME     As String = "cobServer_Click"
-    
+
     On Error GoTo EH
     If cobServer.ListIndex >= 0 Then
         pvContents = pvProfile(cobServer.Text)
@@ -393,42 +482,12 @@ EH:
 End Sub
 
 Private Sub Command1_Click()
-    Const MIN_VERSION_EXT_EVENTS As Long = 15
-    Dim oConn           As ADODB.Connection
-    Dim sDriver         As String
-
-    On Error GoTo EH
     pvDisabled = True
-    Set oConn = New Connection
-    oConn.ConnectionTimeout = 5
-    '--- ODBC drivers cannot talk to SQL 2000 so sp_who2 mode keeps SQLOLEDB
-    If optExtEvents.Value Then
-        sDriver = pvGetOdbcDriver()
+    If pvOpen() Then
+        m_bOk = True
+        Visible = False
     End If
-    m_sConnectString = pvGetConnectString(sDriver)
-    oConn.Open m_sConnectString
-    Set m_oCmd = New ADODB.Command
-    Set m_oCmd.ActiveConnection = oConn
-    m_oCmd.CommandTimeout = 5
-    If optExtEvents.Value Then
-        If oConn.Execute("SELECT @@MICROSOFTVERSION / 0x1000000").Fields(0).Value < MIN_VERSION_EXT_EVENTS Then
-            MsgBox "Extended Events mode needs SQL Server 2019 or later. Use sp_who2 for this server.", vbExclamation
-            GoTo QH
-        End If
-        m_eMode = ucsMonExtEvents
-    Else
-        m_oCmd.CommandText = "exec sp_who2"
-        m_eMode = ucsMonSpWho2
-    End If
-    m_lRefreshRate = cobRerfesh.ItemData(cobRerfesh.ListIndex)
-    m_bOk = True
-    Visible = False
-QH:
     pvDisabled = False
-    Exit Sub
-EH:
-    MsgBox Error, vbExclamation
-    GoTo QH
 End Sub
 
 Private Sub Command2_Click()

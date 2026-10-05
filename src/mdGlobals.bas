@@ -169,8 +169,10 @@ Public Const TVM_INSERTITEMW                As Long = &H1132
 Public Const TVM_GETITEMW                   As Long = &H113E
 Public Const TVM_SETITEMW                   As Long = &H113F
 '--- tree-view notifications, which arrive Unicode or not by the parent's class
+Public Const TVN_ITEMEXPANDINGW             As Long = -454
 Public Const TVN_SELCHANGEDW                As Long = -451
 Public Const TVN_KEYDOWN                    As Long = -412
+Public Const TVN_ITEMEXPANDING              As Long = -405
 Public Const TVN_SELCHANGED                 As Long = -402
 '--- for ImageList_Create
 Public Const ILC_COLOR32                    As Long = &H20
