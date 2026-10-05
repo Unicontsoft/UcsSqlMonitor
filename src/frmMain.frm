@@ -17,7 +17,7 @@ Begin VB.Form frmMain
       MousePointer    =   9  'Size W E
       ScaleHeight     =   3540
       ScaleWidth      =   96
-      TabIndex        =   2
+      TabIndex        =   3
       TabStop         =   0   'False
       Top             =   924
       Width           =   96
@@ -25,7 +25,7 @@ Begin VB.Form frmMain
    Begin UcsSQLMonitor.ctxListView lvwMain 
       Height          =   4632
       Left            =   336
-      TabIndex        =   0
+      TabIndex        =   1
       Top             =   252
       Width           =   4212
       _ExtentX        =   7430
@@ -43,7 +43,36 @@ Begin VB.Form frmMain
       OwnerData       =   -1  'True
       SortHeaders     =   -1  'True
    End
-
+   Begin VB.PictureBox picTreeSplitter
+      BorderStyle     =   0  'None
+      Height          =   3540
+      Left            =   2100
+      MousePointer    =   9  'Size W E
+      ScaleHeight     =   3540
+      ScaleWidth      =   96
+      TabIndex        =   4
+      TabStop         =   0   'False
+      Top             =   924
+      Width           =   96
+   End
+   Begin UcsSQLMonitor.ctxTreeView tvwServers
+      Height          =   4632
+      Left            =   0
+      TabIndex        =   0
+      Top             =   252
+      Width           =   2000
+      _ExtentX        =   3528
+      _ExtentY        =   8170
+      BeginProperty Font {0BE35203-8F91-11CE-9DE3-00AA004BB851}
+         Name            =   "Tahoma"
+         Size            =   7.8
+         Charset         =   204
+         Weight          =   400
+         Underline       =   0   'False
+         Italic          =   0   'False
+         Strikethrough   =   0   'False
+      EndProperty
+   End
    Begin VB.Timer tmrFetch 
       Enabled         =   0   'False
       Interval        =   200
@@ -64,7 +93,7 @@ Begin VB.Form frmMain
       Left            =   4956
       MultiLine       =   -1  'True
       ScrollBars      =   3  'Both
-      TabIndex        =   1
+      TabIndex        =   2
       Top             =   336
       Width           =   4128
    End
@@ -133,6 +162,13 @@ Private Const ERR_SQL_DB_CHANGED    As Long = 5701
 Private Const ERR_SQL_LANG_CHANGED  As Long = 5703
 Private Const MSG_CONTINUE          As String = "Do you want to continue?"
 Private Const LNG_HISTORY_SIZE      As Long = 32000
+Private Const DBL_TREE_MIN_WIDTH    As Double = 300
+Private Const DBL_TREE_WIDTH        As Double = 2400
+Private Const STR_TREE_ROOT         As String = "SQL Servers"
+Private Const STR_RES_PNG           As String = "CUSTOM"
+Private Const LNG_RES_SERVERS       As Long = 101
+Private Const LNG_RES_SERVER        As Long = 102
+Private Const LNG_ICON_SIZE         As Long = 16
 
 Private m_oCmd              As ADODB.Command
 Private WithEvents m_oConn  As ADODB.Connection
@@ -149,6 +185,8 @@ Private m_sFilter           As String
 Private m_bDown             As Boolean
 Private m_dblDownX          As Double
 Private m_dblRatio          As Double
+Private m_dblTreeWidth      As Double
+Private m_hTreeImages       As LongPtr
 Private m_bSystemProcesses  As Boolean
 Private m_dblCurrentSPID    As Double
 Private m_rsStats           As Recordset
@@ -165,6 +203,11 @@ Private Type UcsColumnInfo
     Field                   As String
     NumberFormat            As String
 End Type
+
+Private Enum UcsTreeImages
+    ucsImgServers
+    ucsImgServer
+End Enum
 
 Private Enum UcsMenuIndexes
     ucsMnuFileConnect = 0
@@ -664,6 +707,48 @@ QH:
     Set m_rsResult = Nothing
 End Sub
 
+Private Sub pvShowServer()
+    Dim hRoot           As LongPtr
+    Dim hNode           As LongPtr
+
+    tvwServers.Clear
+    hRoot = tvwServers.AddNode(0, vbNullString, STR_TREE_ROOT, Image:=ucsImgServers)
+    If LenB(m_sServer) = 0 Then
+        tvwServers.SelectedNode = hRoot
+        Exit Sub
+    End If
+    hNode = tvwServers.AddNode(hRoot, m_sServer, m_sServer, Image:=ucsImgServer)
+    tvwServers.NodeBold(hNode) = True
+    tvwServers.SelectedNode = hNode
+End Sub
+
+Private Sub pvInitTreeImages()
+    Const FUNC_NAME     As String = "pvInitTreeImages"
+    Dim vResId          As Variant
+    Dim baData()        As Byte
+    Dim hBitmap         As LongPtr
+
+    On Error GoTo EH
+    m_hTreeImages = ImageList_Create(LNG_ICON_SIZE, LNG_ICON_SIZE, ILC_COLOR32, 2, 2)
+    If m_hTreeImages = 0 Then
+        Exit Sub
+    End If
+    '--- in UcsTreeImages order
+    For Each vResId In Array(LNG_RES_SERVERS, LNG_RES_SERVER)
+        baData = LoadResData(vResId, STR_RES_PNG)
+        hBitmap = DecodePngBitmap(baData)
+        If hBitmap <> 0 Then
+            Call ImageList_Add(m_hTreeImages, hBitmap, 0)
+            Call DeleteObject(hBitmap)
+        End If
+    Next
+    tvwServers.ImageList = m_hTreeImages
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
+End Sub
+
 Private Sub pvSetCaption(oForm As VB.Form)
     oForm.Caption = IIf(LenB(m_sFilter) <> 0, m_sFilter & " - ", vbNullString) & STR_APP_NAME & " - [" & m_sServer & "]"
 End Sub
@@ -687,7 +772,7 @@ Private Function pvMoveToRow(ByVal lRow As Long) As Boolean
 End Function
 
 Private Sub pvInitColumns()
-    pvAddColumn "SPID", "SPID", 40, NumberFormat:="#,##0"
+    pvAddColumn "SPID", "SPID", 48, NumberFormat:="#,##0"
     pvAddColumn "Login", "Login", 167
     pvAddColumn "Host", "Host", 83
     pvAddColumn "DB", "DB", 208
@@ -743,7 +828,12 @@ Private Sub Form_Resize()
 
     On Error Resume Next
     If WindowState <> vbMinimized Then
-        lvwMain.Move 0, 0, ScaleWidth * m_dblRatio, ScaleHeight
+        tvwServers.Move 0, 0, m_dblTreeWidth, ScaleHeight
+        dblLeft = tvwServers.Left + tvwServers.Width
+        picTreeSplitter.Move dblLeft, 0, 60, ScaleHeight
+        dblLeft = picTreeSplitter.Left + picTreeSplitter.Width
+        '--- the list and history split what is right of the tree
+        lvwMain.Move dblLeft, 0, (ScaleWidth - dblLeft) * m_dblRatio, ScaleHeight
         dblLeft = lvwMain.Left + lvwMain.Width
         picSplitter.Move dblLeft, 0, 60, ScaleHeight
         dblLeft = picSplitter.Left + picSplitter.Width
@@ -956,6 +1046,8 @@ Private Sub mnuFile_Click(Index As Integer)
             If m_eMode = ucsMonExtEvents Then
                 If Not pvInitExtEvents() Then
                     Set m_oConn = Nothing
+                    m_sServer = vbNullString
+                    pvShowServer
                     Caption = STR_APP_NAME
                     lvwMain.RowCount = 0
                     Exit Sub
@@ -969,6 +1061,7 @@ Private Sub mnuFile_Click(Index As Integer)
                 End If
             End With
             pvSetCaption Me
+            pvShowServer
             Set m_rsList = Nothing
             Set m_rsListSort = Nothing
             Set m_rsStats = Nothing
@@ -977,6 +1070,8 @@ Private Sub mnuFile_Click(Index As Integer)
             tmrFetch.Enabled = True
             tmrFetch_Timer
         Else
+            m_sServer = vbNullString
+            pvShowServer
             Caption = STR_APP_NAME
         End If
         lvwMain.RowCount = 0
@@ -1067,7 +1162,7 @@ Private Sub picSplitter_MouseMove(Button As Integer, Shift As Integer, X As Sing
         m_bDown = False
     End If
     If m_bDown Then
-        m_dblRatio = Limit((picSplitter.Left + X - m_dblDownX) / ScaleWidth, 0.05, 0.95)
+        m_dblRatio = Limit((picSplitter.Left + X - m_dblDownX - lvwMain.Left) / (ScaleWidth - lvwMain.Left), 0.05, 0.95)
         Form_Resize
     End If
     Exit Sub
@@ -1077,6 +1172,32 @@ EH:
 End Sub
 
 Private Sub picSplitter_MouseUp(Button As Integer, Shift As Integer, X As Single, Y As Single)
+    m_bDown = False
+End Sub
+
+Private Sub picTreeSplitter_MouseDown(Button As Integer, Shift As Integer, X As Single, Y As Single)
+    m_bDown = True
+    m_dblDownX = X
+End Sub
+
+Private Sub picTreeSplitter_MouseMove(Button As Integer, Shift As Integer, X As Single, Y As Single)
+    Const FUNC_NAME     As String = "picTreeSplitter_MouseMove"
+
+    On Error GoTo EH
+    If Button = 0 Then
+        m_bDown = False
+    End If
+    If m_bDown Then
+        m_dblTreeWidth = Limit(picTreeSplitter.Left + X - m_dblDownX, DBL_TREE_MIN_WIDTH, ScaleWidth / 2)
+        Form_Resize
+    End If
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
+End Sub
+
+Private Sub picTreeSplitter_MouseUp(Button As Integer, Shift As Integer, X As Single, Y As Single)
     m_bDown = False
 End Sub
 
@@ -1133,7 +1254,11 @@ Private Sub Form_Load()
     WindowState = GetSetting(STR_APP_NAME, STR_REG_COMMON, "WindowState", vbNormal)
     m_sFilter = GetSetting(STR_APP_NAME, STR_REG_COMMON, "Filter", vbNullString)
     m_dblRatio = Limit(C_Dbl(GetSetting(STR_APP_NAME, STR_REG_COMMON, "Ratio", 0.75)), 0.05, 0.95)
+    m_dblTreeWidth = Limit(C_Dbl(GetSetting(STR_APP_NAME, STR_REG_COMMON, "TreeWidth", DBL_TREE_WIDTH)), DBL_TREE_MIN_WIDTH, Screen.Width / 2)
     pvInitColumns
+    InitGdiplus
+    pvInitTreeImages
+    pvShowServer
     txtInput.Font.Size = 8
     Call SendMessage(txtInput.hWnd, EM_SETTABSTOPS, 1, 16&)
     If txtInput.Font.Name <> "Consolas" Then
@@ -1161,6 +1286,13 @@ Private Sub Form_Unload(Cancel As Integer)
     End If
     Call SaveSetting(STR_APP_NAME, STR_REG_COMMON, "Filter", m_sFilter)
     Call SaveSetting(STR_APP_NAME, STR_REG_COMMON, "Ratio", m_dblRatio)
+    Call SaveSetting(STR_APP_NAME, STR_REG_COMMON, "TreeWidth", m_dblTreeWidth)
+    If m_hTreeImages <> 0 Then
+        tvwServers.ImageList = 0
+        Call ImageList_Destroy(m_hTreeImages)
+        m_hTreeImages = 0
+    End If
+    TerminateGdiplus
     Exit Sub
 EH:
     PrintError FUNC_NAME

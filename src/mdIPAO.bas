@@ -385,6 +385,7 @@ Private Function TranslateAccelerator(This As UcsIPAOHook, uMsg As APIMSG) As Lo
     Const FUNC_NAME     As String = "TranslateAccelerator"
     Dim bInIde          As Boolean: Debug.Assert SetTrue(bInIde)
     Dim oList           As ctxListView
+    Dim oTree           As ctxTreeView
     Dim bHandled        As Boolean
     Dim oCtl            As Object
     Dim pIPAOReal       As IOleInPlaceActiveObject '--- weakref
@@ -395,6 +396,9 @@ Private Function TranslateAccelerator(This As UcsIPAOHook, uMsg As APIMSG) As Lo
         If TypeOf oCtl Is ctxListView Then
             Set oList = oCtl
             bHandled = oList.frTranslateAccel(uMsg)
+        ElseIf TypeOf oCtl Is ctxTreeView Then
+            Set oTree = oCtl
+            bHandled = oTree.frTranslateAccel(uMsg)
         End If
     End If
     If bHandled Then

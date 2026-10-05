@@ -1,0 +1,18 @@
+#define RT_MANIFEST 24
+#define CREATEPROCESS_MANIFEST_RESOURCE_ID 1
+
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "UcsSqlMonitor.manifest"
+
+/* The server tree icons, from the Fugue set by Yusuke Kamiyamane
+   (http://p.yusukekamiyamane.com/, Creative Commons Attribution 3.0), stored
+   as the PNGs they were drawn as. GDI+ decodes them at run time, which keeps
+   the alpha channel in the tree's image list. Numbered from 101 so they stay
+   clear of the ids VB6 writes into the same resource file.
+
+   The type is CUSTOM rather than RCDATA on purpose: LoadResData looks the type
+   up by that name. */
+#define IDR_SERVERS     101
+#define IDR_SERVER      102
+
+IDR_SERVERS     CUSTOM "servers.png"
+IDR_SERVER      CUSTOM "server.png"

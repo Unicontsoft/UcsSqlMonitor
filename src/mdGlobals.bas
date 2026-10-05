@@ -91,6 +91,7 @@ Public Const LVM_REDRAWITEMS                As Long = &H1015
 Public Const LVM_DELETECOLUMN               As Long = &H101C
 Public Const LVM_GETCOLUMNWIDTH             As Long = &H101D
 Public Const LVM_SETCOLUMNWIDTH             As Long = &H101E
+Public Const LVM_GETHEADER                  As Long = &H101F
 Public Const LVM_GETTOPINDEX                As Long = &H1027
 Public Const LVM_SETITEMSTATE               As Long = &H102B
 Public Const LVM_GETITEMSTATE               As Long = &H102C
@@ -117,17 +118,69 @@ Public Const NM_CLICK                       As Long = -2
 '--- for NMCUSTOMDRAW.dwDrawStage
 Public Const CDDS_PREPAINT                  As Long = &H1
 Public Const CDDS_POSTPAINT                 As Long = &H2
-Public Const CDDS_ITEM                     As Long = &H10000
+Public Const CDDS_ITEM                      As Long = &H10000
 Public Const CDDS_ITEMPREPAINT              As Long = CDDS_ITEM Or CDDS_PREPAINT
 '--- NM_CUSTOMDRAW return values
 Public Const CDRF_DODEFAULT                 As Long = &H0
 Public Const CDRF_NEWFONT                   As Long = &H2
 Public Const CDRF_NOTIFYPOSTPAINT           As Long = &H10
 Public Const CDRF_NOTIFYITEMDRAW            As Long = &H20
+'--- tree-view window styles
+Public Const TVS_HASBUTTONS                 As Long = &H1
+Public Const TVS_SHOWSELALWAYS              As Long = &H20
+Public Const TVS_TRACKSELECT                As Long = &H200
+'--- for TVM_SETEXTENDEDSTYLE
+Public Const TVS_EX_DOUBLEBUFFER            As Long = &H4
+Public Const TVS_EX_FADEINOUTEXPANDOS       As Long = &H40
+'--- for TVITEM.Mask
+Public Const TVIF_TEXT                      As Long = &H1
+Public Const TVIF_IMAGE                     As Long = &H2
+Public Const TVIF_STATE                     As Long = &H8
+Public Const TVIF_SELECTEDIMAGE             As Long = &H20
+'--- for TVITEM.State
+Public Const TVIS_BOLD                      As Long = &H10
+Public Const TVIS_EXPANDED                  As Long = &H20
+'--- for TVM_GETNEXTITEM and TVM_SELECTITEM
+Public Const TVGN_ROOT                      As Long = &H0
+Public Const TVGN_NEXT                      As Long = &H1
+Public Const TVGN_CHILD                     As Long = &H4
+Public Const TVGN_CARET                     As Long = &H9
+'--- for TVM_EXPAND
+Public Const TVE_COLLAPSE                   As Long = &H1
+Public Const TVE_EXPAND                     As Long = &H2
+'--- for TVINSERTSTRUCT.hInsertAfter
+Public Const TVI_ROOT                       As Long = &HFFFF0000
+Public Const TVI_LAST                       As Long = &HFFFF0002
+'--- for TVM_SETIMAGELIST
+Public Const TVSIL_NORMAL                   As Long = 0
+'--- tree-view messages
+Public Const TVM_DELETEITEM                 As Long = &H1101
+Public Const TVM_EXPAND                     As Long = &H1102
+Public Const TVM_GETCOUNT                   As Long = &H1105
+Public Const TVM_SETIMAGELIST               As Long = &H1109
+Public Const TVM_GETNEXTITEM                As Long = &H110A
+Public Const TVM_SELECTITEM                 As Long = &H110B
+Public Const TVM_GETITEM                    As Long = &H110C
+Public Const TVM_SETITEM                    As Long = &H110D
+Public Const TVM_HITTEST                    As Long = &H1111
+Public Const TVM_ENSUREVISIBLE              As Long = &H1114
+Public Const TVM_SETEXTENDEDSTYLE           As Long = &H112C
+Public Const TVM_INSERTITEMW                As Long = &H1132
+Public Const TVM_GETITEMW                   As Long = &H113E
+Public Const TVM_SETITEMW                   As Long = &H113F
+'--- tree-view notifications, which arrive Unicode or not by the parent's class
+Public Const TVN_SELCHANGEDW                As Long = -451
+Public Const TVN_KEYDOWN                    As Long = -412
+Public Const TVN_SELCHANGED                 As Long = -402
+'--- for ImageList_Create
+Public Const ILC_COLOR32                    As Long = &H20
+'--- for GlobalAlloc
+Public Const GMEM_MOVEABLE                  As Long = &H2
 '--- for CreateFontIndirect
 Public Const FW_BOLD                        As Long = 700
 '--- for InitCommonControlsEx
 Public Const ICC_LISTVIEW_CLASSES           As Long = &H1
+Public Const ICC_TREEVIEW_CLASSES           As Long = &H2
 Public Const ICC_USEREX_CLASSES             As Long = &H200
 '--- hresults
 Public Const S_OK                           As Long = 0
@@ -137,6 +190,7 @@ Public Const LOCALE_USER_DEFAULT            As Long = &H400
 Public Const VARIANT_ALPHABOOL              As Long = 2
 '--- window classes
 Public Const STR_CLASS_LISTVIEW             As String = "SysListView32"
+Public Const STR_CLASS_TREEVIEW             As String = "SysTreeView32"
 '--- for SetWindowTheme
 Public Const STR_THEME_EXPLORER             As String = "Explorer"
 
@@ -163,8 +217,21 @@ Public Declare Function UpdateWindow Lib "user32" (ByVal hWnd As LongPtr) As Lon
 Public Declare Function CreateSolidBrush Lib "gdi32" (ByVal crColor As Long) As LongPtr
 Public Declare Function FillRect Lib "user32" (ByVal hDC As LongPtr, lpRect As RECT, ByVal hBrush As LongPtr) As Long
 Public Declare Function SQLGetInstalledDrivers Lib "odbccp32" Alias "SQLGetInstalledDriversW" (ByVal lpszBuf As LongPtr, ByVal cbBufMax As Integer, pcbBufOut As Integer) As Long
-Private Declare Function QueryPerformanceCounter Lib "kernel32" (lpPerformanceCount As Currency) As Long
-Private Declare Function QueryPerformanceFrequency Lib "kernel32" (lpFrequency As Currency) As Long
+Public Declare Function ImageList_Create Lib "comctl32" (ByVal cx As Long, ByVal cy As Long, ByVal Flags As Long, ByVal cInitial As Long, ByVal cGrow As Long) As LongPtr
+Public Declare Function ImageList_Add Lib "comctl32" (ByVal hIml As LongPtr, ByVal hbmImage As LongPtr, ByVal hbmMask As LongPtr) As Long
+Public Declare Function ImageList_Destroy Lib "comctl32" (ByVal hIml As LongPtr) As Long
+Public Declare Function GlobalAlloc Lib "kernel32" (ByVal uFlags As Long, ByVal dwBytes As LongPtr) As LongPtr
+Public Declare Function GlobalLock Lib "kernel32" (ByVal hMem As LongPtr) As LongPtr
+Public Declare Function GlobalUnlock Lib "kernel32" (ByVal hMem As LongPtr) As Long
+Public Declare Function CreateStreamOnHGlobal Lib "ole32" (ByVal hGlobal As LongPtr, ByVal fDeleteOnRelease As Long, ppstm As Any) As Long
+Public Declare Function GdiplusStartup Lib "gdiplus" (hToken As LongPtr, pInput As GDIPLUSSTARTUPINPUT, ByVal pOutput As LongPtr) As Long
+Public Declare Function GdiplusShutdown Lib "gdiplus" (ByVal hToken As LongPtr) As Long
+Public Declare Function GdipCreateBitmapFromStream Lib "gdiplus" (ByVal pStream As stdole.IUnknown, pBitmap As LongPtr) As Long
+Public Declare Function GdipCreateHBITMAPFromBitmap Lib "gdiplus" (ByVal pBitmap As LongPtr, hBmpReturn As LongPtr, ByVal clrBackground As Long) As Long
+Public Declare Function GdipDisposeImage Lib "gdiplus" (ByVal pImage As LongPtr) As Long
+Public Declare Function QueryPerformanceCounter Lib "kernel32" (lpPerformanceCount As Currency) As Long
+Public Declare Function QueryPerformanceFrequency Lib "kernel32" (lpFrequency As Currency) As Long
+Public Declare Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
 
 Public Type tagInitCommonControlsEx
    lngSize              As Long
@@ -304,11 +371,60 @@ Public Type NMLVCUSTOMDRAW
     iSubItem            As Long
 End Type
 
+Public Type TVITEM
+    Mask                As Long
+    hItem               As LongPtr
+    State               As Long
+    stateMask           As Long
+    pszText             As LongPtr
+    cchTextMax          As Long
+    iImage              As Long
+    iSelectedImage      As Long
+    cChildren           As Long
+    lParam              As LongPtr
+End Type
+
+Public Type TVINSERTSTRUCT
+    hParent             As LongPtr
+    hInsertAfter        As LongPtr
+    Item                As TVITEM
+End Type
+
+Public Type TVHITTESTINFO
+    pt                  As APIPOINT
+    Flags               As Long
+    hItem               As LongPtr
+End Type
+
+Public Type NMTREEVIEW
+    Hdr                 As NMHDR
+    Action              As Long
+    itemOld             As TVITEM
+    itemNew             As TVITEM
+    ptDrag              As APIPOINT
+End Type
+
+Public Type NMTVCUSTOMDRAW
+    Nmcd                As NMCUSTOMDRAW
+    clrText             As Long
+    clrTextBk           As Long
+    iLevel              As Long
+End Type
+
+Public Type GDIPLUSSTARTUPINPUT
+    GdiplusVersion              As Long
+    DebugEventCallback          As LongPtr
+    SuppressBackgroundThread    As Long
+    SuppressExternalCodecs      As Long
+End Type
+
 '=========================================================================
 ' Constants and member variables
 '=========================================================================
 
 Public Const STR_APP_NAME      As String = "Ucs SQL Monitor"
+
+Private m_hGdiPlus                  As LongPtr
 
 '=========================================================================
 ' Error handling
@@ -492,7 +608,7 @@ Public Function InitCommonControlsVB() As Boolean
    Call LoadLibrary(StrPtr("shell32.dll"))
    With iccex
        .lngSize = LenB(iccex)
-       .lngICC = ICC_LISTVIEW_CLASSES Or ICC_USEREX_CLASSES
+       .lngICC = ICC_LISTVIEW_CLASSES Or ICC_TREEVIEW_CLASSES Or ICC_USEREX_CLASSES
    End With
    Call InitCommonControlsEx(iccex)
    InitCommonControlsVB = (Err.Number = 0)
@@ -930,6 +1046,56 @@ Public Function ConcatCollection(oCol As Collection, Optional Separator As Strin
             lSize = lSize + Len(vElem) + Len(Separator)
         Next
     End If
+End Function
+
+'--- GDI+ is started where the program starts and shut down where it ends;
+'--- everything that draws through it assumes it is already up
+Public Sub InitGdiplus()
+    Dim uStartup        As GDIPLUSSTARTUPINPUT
+
+    If m_hGdiPlus <> 0 Then
+        Exit Sub
+    End If
+    uStartup.GdiplusVersion = 1
+    Call GdiplusStartup(m_hGdiPlus, uStartup, 0)
+End Sub
+
+Public Sub TerminateGdiplus()
+    If m_hGdiPlus <> 0 Then
+        Call GdiplusShutdown(m_hGdiPlus)
+        m_hGdiPlus = 0
+    End If
+End Sub
+
+'--- a PNG out of the resource file as a 32-bit bitmap with its alpha, the
+'--- caller owns it and has to DeleteObject it
+Public Function DecodePngBitmap(baData() As Byte) As LongPtr
+    Dim lSize           As Long
+    Dim hMem            As LongPtr
+    Dim lPtr            As LongPtr
+    Dim pStream         As stdole.IUnknown
+    Dim pBitmap         As LongPtr
+    Dim hBitmap         As LongPtr
+
+    lSize = UBound(baData) - LBound(baData) + 1
+    If lSize <= 0 Then
+        Exit Function
+    End If
+    hMem = GlobalAlloc(GMEM_MOVEABLE, lSize)
+    If hMem = 0 Then
+        Exit Function
+    End If
+    lPtr = GlobalLock(hMem)
+    Call CopyMemory(ByVal lPtr, baData(LBound(baData)), lSize)
+    Call GlobalUnlock(hMem)
+    If CreateStreamOnHGlobal(hMem, 1, pStream) = 0 Then
+        If GdipCreateBitmapFromStream(pStream, pBitmap) = 0 Then
+            '--- transparent black as the background is what keeps the alpha
+            Call GdipCreateHBITMAPFromBitmap(pBitmap, hBitmap, 0)
+            Call GdipDisposeImage(pBitmap)
+        End If
+    End If
+    DecodePngBitmap = hBitmap
 End Function
 
 Private Function pvSetTrue(bValue As Boolean) As Boolean

@@ -732,6 +732,10 @@ Private Sub pvApplyFont()
     Set pFont = UserControl.Font
     Call SendMessage(m_hList, WM_SETFONT, pFont.hFont, ByVal 1&)
     pvCreateBoldFont
+    '--- the list passes its own font to the header so bold has to come after
+    If m_hFontBold <> 0 Then
+        Call SendMessage(SendMessage(m_hList, LVM_GETHEADER, 0, ByVal 0&), WM_SETFONT, m_hFontBold, ByVal 1&)
+    End If
 End Sub
 
 Private Sub pvInit()

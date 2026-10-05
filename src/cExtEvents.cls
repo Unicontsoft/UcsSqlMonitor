@@ -32,6 +32,9 @@ Private Const STR_SESSION_NAME          As String = "UcsSqlMonitor"
 Private Const DBL_RESYNC_INTERVAL       As Double = 60
 Private Const LNG_OBJTYPE_FUNCTION      As Long = 20038
 Private Const LNG_OBJTYPE_PREPARED      As Long = 20816
+Private Const ERR_SQL_XE_NOT_FOUND      As Long = 15151
+Private Const ERR_SQL_XE_EXISTS         As Long = 25631
+Private Const ERR_SQL_XE_STARTED        As Long = 25705
 
 Private m_oConn                     As ADODB.Connection
 Private m_oCmd                      As ADODB.Command
@@ -100,11 +103,15 @@ Public Sub Shutdown()
             "BEGIN TRY" & vbCrLf & _
             "    EXEC master.sys.sp_releaseapplock @Resource = N'" & STR_SESSION_NAME & "', @LockOwner = 'Session'" & vbCrLf & _
             "END TRY BEGIN CATCH END CATCH" & vbCrLf & _
-            "EXEC @rc = master.sys.sp_getapplock @Resource = N'" & STR_SESSION_NAME & "', @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 0" & vbCrLf & _
+            "EXEC @rc = master.sys.sp_getapplock @Resource = N'" & STR_SESSION_NAME & "', @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 1000" & vbCrLf & _
             "IF @rc >= 0" & vbCrLf & _
             "BEGIN" & vbCrLf & _
-            "    IF EXISTS (SELECT * FROM sys.server_event_sessions WHERE name = N'" & STR_SESSION_NAME & "')" & vbCrLf & _
+            "    BEGIN TRY" & vbCrLf & _
             "        DROP EVENT SESSION [" & STR_SESSION_NAME & "] ON SERVER" & vbCrLf & _
+            "    END TRY" & vbCrLf & _
+            "    BEGIN CATCH" & vbCrLf & _
+            "        IF ERROR_NUMBER() <> " & ERR_SQL_XE_NOT_FOUND & " THROW" & vbCrLf & _
+            "    END CATCH" & vbCrLf & _
             "    EXEC master.sys.sp_releaseapplock @Resource = N'" & STR_SESSION_NAME & "', @LockOwner = 'Session'" & vbCrLf & _
             "END", , adExecuteNoRecords
     End If
@@ -221,16 +228,16 @@ Private Sub pvEnsureSession()
     cSql.Add "    MAX_EVENT_SIZE = 8 MB, TRACK_CAUSALITY = OFF, STARTUP_STATE = OFF)"
     cSql.Add "END TRY"
     cSql.Add "BEGIN CATCH"
-    '--- 25631 is another monitor creating it first
-    cSql.Add "    IF ERROR_NUMBER() <> 25631 THROW"
+    '--- another monitor may have created it first
+    cSql.Add "    IF ERROR_NUMBER() <> " & ERR_SQL_XE_EXISTS & " THROW"
     cSql.Add "END CATCH"
     cSql.Add "IF NOT EXISTS (SELECT * FROM sys.dm_xe_sessions WHERE name = N'" & STR_SESSION_NAME & "')"
     cSql.Add "BEGIN TRY"
     cSql.Add "    ALTER EVENT SESSION [" & STR_SESSION_NAME & "] ON SERVER STATE = START"
     cSql.Add "END TRY"
     cSql.Add "BEGIN CATCH"
-    '--- 25705 is already started by another monitor
-    cSql.Add "    IF ERROR_NUMBER() <> 25705 THROW"
+    '--- another monitor may have started it first
+    cSql.Add "    IF ERROR_NUMBER() <> " & ERR_SQL_XE_STARTED & " THROW"
     cSql.Add "END CATCH"
     m_oConn.Execute ConcatCollection(cSql), , adExecuteNoRecords
 End Sub
