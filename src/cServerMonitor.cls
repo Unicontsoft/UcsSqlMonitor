@@ -32,6 +32,8 @@ Private Const ERR_NO_MORE_RESULTS       As Long = &H40EC9
 Private Const ERR_SQL_DB_CHANGED        As Long = 5701
 Private Const ERR_SQL_LANG_CHANGED      As Long = 5703
 Private Const LNG_TIMEOUT               As Long = 5
+Private Const DBL_RETRY_MIN             As Double = 1
+Private Const DBL_RETRY_MAX             As Double = 30
 
 Private m_sServer                   As String
 Private m_eMode                     As UcsMonitorMode
@@ -50,6 +52,9 @@ Private m_dblLastFetch              As Double
 Private m_bDelayFetch               As Boolean
 Private m_bClosing                  As Boolean
 Private m_dblFetchStart             As Double
+Private m_bReopening                As Boolean
+Private m_dblRetryAt                As Double
+Private m_dblRetryDelay             As Double
 
 '=========================================================================
 ' Error handling
@@ -119,9 +124,13 @@ Public Sub Reconnect(oOwner As frmMain)
 
     dblStart = TraceStart()
     m_bClosing = False
+    m_bReopening = False
+    m_dblRetryDelay = 0
     Set m_oConn = New ADODB.Connection
     m_oConn.ConnectionTimeout = LNG_TIMEOUT
-    m_oConn.Open m_sConnectString
+    With New cAsyncOpen
+        .OpenConnection m_oConn, m_sConnectString
+    End With
     Set m_oCmd = New ADODB.Command
     Set m_oCmd.ActiveConnection = m_oConn
     m_oCmd.CommandTimeout = LNG_TIMEOUT
@@ -133,14 +142,22 @@ Public Sub Reconnect(oOwner As frmMain)
     TraceEnd "monitor.reconnect", dblStart, m_sServer
 End Sub
 
-'--- called on every timer tick, fetches when this server's refresh interval has passed
+'--- called on every timer tick, fetches when this server's refresh interval has passed and
+'--- opens a lost connection again once its retry delay has passed
 Public Sub Tick()
     If m_oConn Is Nothing Or m_bClosing Then
         Exit Sub
     End If
-    If TimerEx - m_dblLastFetch >= m_dblInterval Then
-        pvFetch
-    End If
+    Select Case m_oConn.State
+    Case adStateOpen
+        If TimerEx - m_dblLastFetch >= m_dblInterval Then
+            pvFetch
+        End If
+    Case adStateClosed
+        If Not m_bReopening And TimerEx >= m_dblRetryAt Then
+            pvReopen
+        End If
+    End Select
 End Sub
 
 Public Sub KillSession(ByVal lSpid As Long)
@@ -151,22 +168,26 @@ End Sub
 Public Sub Shutdown()
     Const FUNC_NAME     As String = "Shutdown"
     Dim dblStart        As Double
+    Dim bConnecting     As Boolean
 
     On Error GoTo EH
     dblStart = TraceStart()
     '--- cancelling the fetch fires FetchComplete, which must not start another one meanwhile
     m_bClosing = True
     pvCloseResult
-    '--- without pooling the close ends the session, which releases its shared lock
+    '--- without pooling the close ends the session, which releases its shared lock. A connection
+    '--- still being opened is only released, closing it would wait for the server
     If Not m_oConn Is Nothing Then
-        If m_oConn.State <> adStateClosed Then
+        bConnecting = ((m_oConn.State And adStateConnecting) <> 0)
+        If Not bConnecting And m_oConn.State <> adStateClosed Then
             m_oConn.Close
         End If
     End If
-    If Not m_oExtEvents Is Nothing Then
+    '--- a server that cannot be reached right now cannot drop the session either
+    If Not m_oExtEvents Is Nothing And Not bConnecting Then
         m_oExtEvents.DropIfLast m_sConnectString
-        Set m_oExtEvents = Nothing
     End If
+    Set m_oExtEvents = Nothing
 QH:
     Set m_oCmd = Nothing
     Set m_oConn = Nothing
@@ -206,6 +227,7 @@ Private Sub pvFetch()
     lState = m_rsResult.State
     If Err.Number <> 0 Then
         pvTestConn
+        Exit Sub
     End If
     On Error GoTo EH
     If (lState And (adStateConnecting Or adStateExecuting Or adStateFetching)) <> 0 Then
@@ -234,25 +256,51 @@ EH:
     Resume Next
 End Sub
 
+'--- a failed fetch drops the connection, Tick opens it again without waiting on the server.
+'--- A dead connection could keep a probe query waiting, so none is sent
 Private Sub pvTestConn()
+    Const FUNC_NAME     As String = "pvTestConn"
     Dim dblStart        As Double
 
+    On Error GoTo EH
     dblStart = TraceStart()
-    On Error Resume Next
-    If m_oConn.State = adStateOpen Then
-        m_oConn.Execute "SELECT @@TRANCOUNT"
-        If Err.Number <> 0 Then
-            m_oConn.Close
-        End If
+    pvCloseResult
+    If m_oConn.State <> adStateClosed Then
+        m_oConn.Close
     End If
-    If m_oConn.State = adStateClosed Then
-        m_oConn.Open m_sConnectString
-        Set m_oCmd.ActiveConnection = m_oConn
-        If Not m_oExtEvents Is Nothing Then
-            m_oExtEvents.Init m_oConn, m_bStatements
-        End If
-    End If
+QH:
+    pvScheduleRetry
     TraceEnd "monitor.testconn", dblStart, m_sServer
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume QH
+End Sub
+
+Private Sub pvScheduleRetry()
+    If m_dblRetryDelay < DBL_RETRY_MIN Then
+        m_dblRetryDelay = DBL_RETRY_MIN
+    Else
+        m_dblRetryDelay = m_dblRetryDelay * 2
+        If m_dblRetryDelay > DBL_RETRY_MAX Then
+            m_dblRetryDelay = DBL_RETRY_MAX
+        End If
+    End If
+    m_dblRetryAt = TimerEx + m_dblRetryDelay
+End Sub
+
+Private Sub pvReopen()
+    Const FUNC_NAME     As String = "pvReopen"
+
+    On Error GoTo EH
+    TraceLine "monitor.reopen", 0, m_sServer & vbTab & "delay=" & m_dblRetryDelay
+    m_bReopening = True
+    m_oConn.Open m_sConnectString, , , adAsyncConnect
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    m_bReopening = False
+    pvScheduleRetry
 End Sub
 
 Private Sub pvCloseResult()
@@ -273,6 +321,38 @@ End Sub
 '=========================================================================
 ' Control events
 '=========================================================================
+
+'--- outcome of an asynchronous reopen started by Tick, a dialog's open waits on its own
+Private Sub m_oConn_ConnectComplete(ByVal pError As ADODB.Error, adStatus As ADODB.EventStatusEnum, ByVal pConnection As ADODB.Connection)
+    Const FUNC_NAME     As String = "m_oConn_ConnectComplete"
+    Dim dblStart        As Double
+
+    On Error GoTo EH
+    If Not m_bReopening Then
+        Exit Sub
+    End If
+    m_bReopening = False
+    If m_bClosing Then
+        Exit Sub
+    End If
+    If adStatus = adStatusErrorsOccurred Or m_oConn.State <> adStateOpen Then
+        pvScheduleRetry
+        Exit Sub
+    End If
+    dblStart = TraceStart()
+    Set m_oCmd.ActiveConnection = m_oConn
+    If Not m_oExtEvents Is Nothing Then
+        m_oExtEvents.Init m_oConn, m_bStatements
+    End If
+    m_dblRetryDelay = 0
+    m_dblLastFetch = 0
+    TraceEnd "monitor.reopened", dblStart, m_sServer
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    '--- the session could not be set up again, drop it and try later
+    pvTestConn
+End Sub
 
 Private Sub m_oConn_InfoMessage(ByVal pError As ADODB.Error, adStatus As ADODB.EventStatusEnum, ByVal pConnection As ADODB.Connection)
     Const FUNC_NAME     As String = "m_oConn_InfoMessage"

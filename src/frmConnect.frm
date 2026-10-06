@@ -184,6 +184,7 @@ Private m_oCmd              As ADODB.Command
 Private m_lRefreshRate      As Long
 Private m_cProfiles         As Collection
 Private m_sConnectString    As String
+Private m_bOpening          As Boolean
 
 '=========================================================================
 ' Error handling
@@ -415,7 +416,11 @@ Private Function pvOpen() As Boolean
         sDriver = pvGetOdbcDriver()
     End If
     m_sConnectString = pvGetConnectString(sDriver)
-    oConn.Open m_sConnectString
+    m_bOpening = True
+    With New cAsyncOpen
+        .OpenConnection oConn, m_sConnectString
+    End With
+    m_bOpening = False
     TraceEnd "connect.open", dblStart, cobServer.Text
     dblStart = TraceStart()
     Set m_oCmd = New ADODB.Command
@@ -435,6 +440,7 @@ Private Function pvOpen() As Boolean
     TraceEnd "connect.check", dblStart, cobServer.Text
     pvOpen = True
 QH:
+    m_bOpening = False
     Exit Function
 EH:
     MsgBox cobServer.Text & ": " & Error, vbExclamation
@@ -507,6 +513,13 @@ End Function
 '=========================================================================
 ' Control events
 '=========================================================================
+
+Private Sub Form_QueryUnload(Cancel As Integer, UnloadMode As Integer)
+    '--- the connection being opened keeps the message loop going in the meantime
+    If m_bOpening And UnloadMode = vbFormControlMenu Then
+        Cancel = True
+    End If
+End Sub
 
 Private Sub cobServer_Click()
     Const FUNC_NAME     As String = "cobServer_Click"

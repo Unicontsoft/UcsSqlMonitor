@@ -11,6 +11,7 @@ Module=mdIPAO; ..\src\mdIPAO.bas
 Class=cExtEvents; ..\src\cExtEvents.cls
 Class=cServerMonitor; ..\src\cServerMonitor.cls
 Class=cRowFilter; ..\src\cRowFilter.cls
+Class=cAsyncOpen; ..\src\cAsyncOpen.cls
 UserControl=..\src\ctxListView.ctl
 UserControl=..\src\ctxTreeView.ctl
 ResFile32="..\res\UcsSqlMonitor.res"

@@ -192,6 +192,8 @@ Private Const LNG_RES_SERVERS       As Long = 101
 Private Const LNG_RES_SERVER        As Long = 102
 Private Const LNG_ICON_SIZE         As Long = 16
 Private Const LNG_TICK_INTERVAL     As Long = 40
+Private Const DBL_RENDER_INTERVAL   As Double = 0.1
+Private Const LNG_COMPACT_DELETED   As Long = 200
 
 Private m_cServers          As Collection
 Private m_rsList            As Recordset
@@ -212,6 +214,13 @@ Attribute m_oFrmStats.VB_VarHelpID = -1
 Private m_cSelected         As Collection
 Private m_bInSet            As Boolean
 Private m_aColumns()        As UcsColumnInfo
+Private m_cHistory          As Collection
+Private m_lDeleted          As Long
+Private m_bRenderPending    As Boolean
+Private m_bRenderData       As Boolean
+Private m_bRenderStats      As Boolean
+Private m_dblLastRender     As Double
+Private m_bConnecting       As Boolean
 Private m_dblLastTick       As Double
 Private m_dblLastFlush      As Double
 Private m_lCellCount        As Long
@@ -259,6 +268,9 @@ Private Property Get pvSelectedRows() As Collection
     Dim lRow            As Long
     Dim lIdx            As Long
     Dim sKey            As String
+    Dim lCount          As Long
+    Dim oServer         As ADODB.Field
+    Dim oSpid           As ADODB.Field
 
     On Error GoTo EH
     Set pvSelectedRows = New Collection
@@ -268,15 +280,23 @@ Private Property Get pvSelectedRows() As Collection
             pvSelectedRows.Add pvGetRowKey(m_rsListSort!Server.Value, m_rsListSort!SPID.Value)
         End If
     End If
-    If lvwMain.SelectedCount > 0 Then
-        For lIdx = 1 To lvwMain.RowCount
+    If m_rsListSort Is Nothing Then
+        Exit Property
+    End If
+    If lvwMain.SelectedCount > 0 And m_rsListSort.RecordCount > 0 Then
+        '--- one pass in list order, positioning a row by number costs a scan of the rows before it
+        Set oServer = m_rsListSort.Fields("Server")
+        Set oSpid = m_rsListSort.Fields("SPID")
+        lCount = lvwMain.RowCount
+        m_rsListSort.MoveFirst
+        Do While Not m_rsListSort.EOF And lIdx < lCount
+            lIdx = lIdx + 1
             If lvwMain.RowSelected(lIdx) Then
-                If pvMoveToRow(lIdx) Then
-                    sKey = pvGetRowKey(m_rsListSort!Server.Value, m_rsListSort!SPID.Value)
-                    pvSelectedRows.Add sKey, sKey
-                End If
+                sKey = pvGetRowKey(oServer.Value, oSpid.Value)
+                pvSelectedRows.Add sKey, sKey
             End If
-        Next
+            m_rsListSort.MoveNext
+        Loop
     End If
     Exit Property
 EH:
@@ -290,18 +310,31 @@ Private Property Set pvSelectedRows(oValue As Collection)
     Dim lIdx            As Long
     Dim sKey            As String
     Dim bSelected       As Boolean
+    Dim lCount          As Long
+    Dim oServer         As ADODB.Field
+    Dim oSpid           As ADODB.Field
+    Dim sFocusKey       As String
 
     On Error GoTo EH
     If oValue.Count > 0 Then
         m_bInSet = True
-        For lIdx = 1 To lvwMain.RowCount
+        '--- one pass in list order, positioning a row by number costs a scan of the rows before it
+        Set oServer = m_rsListSort.Fields("Server")
+        Set oSpid = m_rsListSort.Fields("SPID")
+        sFocusKey = oValue(1)
+        lCount = lvwMain.RowCount
+        If m_rsListSort.RecordCount > 0 Then
+            m_rsListSort.MoveFirst
+        End If
+        For lIdx = 1 To lCount
             bSelected = False
-            If pvMoveToRow(lIdx) Then
-                sKey = pvGetRowKey(m_rsListSort!Server.Value, m_rsListSort!SPID.Value)
-                If sKey = oValue(1) Then
+            If Not m_rsListSort.EOF Then
+                sKey = pvGetRowKey(oServer.Value, oSpid.Value)
+                If sKey = sFocusKey Then
                     lFocus = lIdx
                 End If
                 bSelected = SearchCollection(oValue, sKey)
+                m_rsListSort.MoveNext
             End If
             If lvwMain.RowSelected(lIdx) <> bSelected Then
                 lvwMain.RowSelected(lIdx) = bSelected
@@ -351,6 +384,7 @@ Private Sub pvRefreshInput()
     Const FUNC_NAME     As String = "pvRefreshInput"
     Dim lRow            As Long
     Dim sInputBuffer    As String
+    Dim vHistory        As Variant
 
     On Error GoTo EH
     If m_rsListSort Is Nothing Then
@@ -359,12 +393,12 @@ Private Sub pvRefreshInput()
     lRow = lvwMain.FocusedRow
     If lRow > 0 Then
         If pvMoveToRow(lRow) Then
-            If SearchCollection(m_rsListSort.Fields, "Input_Buffer2") And Not m_rsListSort.EOF Then
-                sInputBuffer = C_Str(m_rsListSort!Input_Buffer2.Value)
-                If txtInput.Text <> sInputBuffer Then
-                    txtInput.Text = sInputBuffer
-                    txtInput.SelStart = Len(sInputBuffer)
-                End If
+            If SearchCollection(m_cHistory, pvGetRowKey(m_rsListSort!Server.Value, m_rsListSort!SPID.Value), RetVal:=vHistory) Then
+                sInputBuffer = vHistory
+            End If
+            If txtInput.Text <> sInputBuffer Then
+                txtInput.Text = sInputBuffer
+                txtInput.SelStart = Len(sInputBuffer)
             End If
         End If
     Else
@@ -465,9 +499,6 @@ Private Sub pvShowResults(oServer As cServerMonitor, rs As Recordset)
     pvPrepareList
     dblStep = TraceStart()
     '--- sync rs, sp_who2 columns map to list fields by position up to REQUESTID
-    Set m_cList = InitIndexCollection(m_rsList, "Server", "SPID")
-    TraceEnd "sp_who2.index", dblStep, sServer
-    dblStep = TraceStart()
     '--- each column is looked up once, a Field follows its recordset's current row
     If rs.RecordCount > 0 Then
         For Each oFld In rs.Fields
@@ -570,7 +601,7 @@ NextRow:
             If (m_rsList!SPID.Value > 50 And LCase$(C_Str(m_rsList!Status.Value)) <> "background" And LCase$(C_Str(m_rsList!Command.Value)) <> "task manager") Or oServer.SystemProcesses Then
                 If Not cResult Is Nothing Then
                     If Not SetBookmark(rs, cResult, "#" & C_Str(m_rsList!SPID.Value)) Then
-                        m_rsList.Delete
+                        pvDeleteRow pvGetRowKey(sServer, m_rsList!SPID.Value)
                         GoTo LoopNext
                     End If
                 End If
@@ -596,14 +627,13 @@ NextRow:
                     m_rsList!LastActive.Value = m_rsList!IsActive.Value
                 End If
             Else
-                RemoveCollection m_cList, pvGetRowKey(sServer, m_rsList!SPID.Value)
-                m_rsList.Delete
+                pvDeleteRow pvGetRowKey(sServer, m_rsList!SPID.Value)
             End If
 LoopNext:
         Loop
     End If
     TraceEnd "sp_who2.stats", dblStep, sServer & vbTab & "rows=" & rs.RecordCount & " list=" & m_rsList.RecordCount
-    pvRefreshList bRefreshData, bRefreshStats
+    pvQueueRender bRefreshData, bRefreshStats
     TraceEnd "sp_who2.total", dblStart, sServer
     Exit Sub
 EH:
@@ -641,6 +671,9 @@ Private Function pvIsShownProcess( _
     pvIsShownProcess = True
 End Function
 
+'--- the list, its sorted clone and its index live for the whole session: the clone follows
+'--- added, changed and deleted rows by itself. Only the deleted rows the recordset keeps
+'--- are dropped now and then by a round trip through a property bag
 Private Sub pvPrepareList()
     Dim sSort           As String
     Dim dblStart        As Double
@@ -661,7 +694,6 @@ Private Sub pvPrepareList()
             "SP2", adInteger, _
             "Wait", adVarWChar, 64, _
             "Trans", adInteger, _
-            "Input_Buffer2", adBSTR, _
             "IsActive", adBoolean, _
             "LastActive", adBoolean, _
             "LoginTime", adDate, _
@@ -669,21 +701,24 @@ Private Sub pvPrepareList()
             "IsMatch", adBoolean)
         Set m_rsListSort = m_rsList.Clone
         m_rsListSort.Sort = "Server, DB, Login, Host, SPID"
+        Set m_cList = New Collection
+        Set m_cHistory = New Collection
+        m_lDeleted = 0
         pvApplyFilter
         pvShowSortOrder
-    Else
+    ElseIf m_lDeleted >= LNG_COMPACT_DELETED Then
         sSort = m_rsListSort.Sort
         dblStart = TraceStart()
         With New PropertyBag
             .WriteProperty "rs", m_rsList
             Set m_rsList = .ReadProperty("rs")
         End With
-        TraceEnd "prepare.persist", dblStart, vbTab & "list=" & m_rsList.RecordCount
-        dblStart = TraceStart()
         Set m_rsListSort = m_rsList.Clone
         m_rsListSort.Sort = sSort
-        TraceEnd "prepare.clone_sort", dblStart
+        Set m_cList = InitIndexCollection(m_rsList, "Server", "SPID")
+        m_lDeleted = 0
         pvApplyFilter
+        TraceEnd "prepare.compact", dblStart, vbTab & "list=" & m_rsList.RecordCount
     End If
     If m_rsStats Is Nothing Then
         Set m_rsStats = CreateRecordset( _
@@ -694,6 +729,49 @@ Private Sub pvPrepareList()
             "Opers", adInteger)
         Set m_cStats = InitIndexCollection(m_rsStats, "Host", "Login", "DB")
     End If
+End Sub
+
+'--- the current row of the list leaves it together with its index entry and history
+Private Sub pvDeleteRow(sKey As String)
+    RemoveCollection m_cList, sKey
+    RemoveCollection m_cHistory, sKey
+    m_rsList.Delete
+    m_lDeleted = m_lDeleted + 1
+End Sub
+
+'--- appends to a session's history, which keeps only its most recent part
+Private Sub pvAppendHistory(sKey As String, sText As String)
+    Dim vHistory        As Variant
+
+    If SearchCollection(m_cHistory, sKey, RetVal:=vHistory) Then
+        RemoveCollection m_cHistory, sKey
+    End If
+    m_cHistory.Add Right$(vHistory & sText, LNG_HISTORY_SIZE), sKey
+End Sub
+
+'--- results of every server end up in one repaint per render interval
+Private Sub pvQueueRender(ByVal bRefreshData As Boolean, ByVal bRefreshStats As Boolean)
+    m_bRenderPending = True
+    m_bRenderData = m_bRenderData Or bRefreshData
+    m_bRenderStats = m_bRenderStats Or bRefreshStats
+End Sub
+
+Private Sub pvRender()
+    Dim dblStart        As Double
+    Dim bRefreshData    As Boolean
+    Dim bRefreshStats   As Boolean
+
+    dblStart = TraceStart()
+    bRefreshData = m_bRenderData
+    bRefreshStats = m_bRenderStats
+    m_bRenderPending = False
+    m_bRenderData = False
+    m_bRenderStats = False
+    m_dblLastRender = TimerEx
+    If Not m_rsListSort Is Nothing Then
+        pvRefreshList bRefreshData, bRefreshStats
+    End If
+    TraceEnd "render", dblStart, vbTab & "data=" & -bRefreshData & " stats=" & -bRefreshStats
 End Sub
 
 '--- header arrows for the sort keys, all but the SPID tie-break
@@ -789,9 +867,6 @@ Private Sub pvShowExtEvents(oServer As cServerMonitor, rs As Recordset)
     End If
     pvPrepareList
     dblStep = TraceStart()
-    Set m_cList = InitIndexCollection(m_rsList, "Server", "SPID")
-    TraceEnd "xe.index", dblStep, sServer
-    dblStep = TraceStart()
     '--- 2. sessions snapshot, only a full one has every SPID so missing ones are gone
     Set rsSnap = rs.NextRecordset
     Set cSeen = New Collection
@@ -809,7 +884,7 @@ Private Sub pvShowExtEvents(oServer As cServerMonitor, rs As Recordset)
             bRefreshData = True
         ElseIf C_Str(m_rsList!LoginTime.Value) <> C_Str(rsSnap!LoginTime.Value) Then
             '--- same SPID reused by a new session
-            m_rsList!Input_Buffer2.Value = Null
+            RemoveCollection m_cHistory, sRowKey
             bRefreshData = True
         End If
         For Each vField In Array("Status", "Login", "Host", "DB", "Program", "CPU", "Dsk", "Last_Batch", "LoginTime")
@@ -829,8 +904,9 @@ Private Sub pvShowExtEvents(oServer As cServerMonitor, rs As Recordset)
     lIter = 0
     Do While MoveRecordset(rsEvents, lIter)
         sKey = "#" & rsEvents!SPID.Value
-        If SetBookmark(m_rsList, m_cList, pvGetRowKey(sServer, rsEvents!SPID.Value)) Then
-            m_rsList!Input_Buffer2.Value = Right$(C_Str(m_rsList!Input_Buffer2.Value) & oServer.ExtEvents.FormatEvent(rsEvents), LNG_HISTORY_SIZE)
+        sRowKey = pvGetRowKey(sServer, rsEvents!SPID.Value)
+        If SearchCollection(m_cList, sRowKey) Then
+            pvAppendHistory sRowKey, oServer.ExtEvents.FormatEvent(rsEvents)
             RemoveCollection cActive, sKey
             cActive.Add True, sKey
             bRefreshData = True
@@ -844,8 +920,7 @@ Private Sub pvShowExtEvents(oServer As cServerMonitor, rs As Recordset)
         End If
         sKey = "#" & m_rsList!SPID.Value
         If bFull And Not SearchCollection(cSeen, sKey) Then
-            RemoveCollection m_cList, pvGetRowKey(sServer, m_rsList!SPID.Value)
-            m_rsList.Delete
+            pvDeleteRow pvGetRowKey(sServer, m_rsList!SPID.Value)
             bRefreshData = True
         Else
             If SetBookmark(rsLive, cLive, sKey) Then
@@ -869,7 +944,7 @@ Private Sub pvShowExtEvents(oServer As cServerMonitor, rs As Recordset)
             End If
             bIsActive = SearchCollection(cActive, sKey)
             If bIsActive And lLost > 0 Then
-                m_rsList!Input_Buffer2.Value = Right$(C_Str(m_rsList!Input_Buffer2.Value) & "-- " & lLost & " events lost" & vbCrLf, LNG_HISTORY_SIZE)
+                pvAppendHistory pvGetRowKey(sServer, m_rsList!SPID.Value), "-- " & lLost & " events lost" & vbCrLf
             End If
             Select Case LCase$(C_Str(m_rsList!Status.Value))
             Case "running", "runnable"
@@ -889,7 +964,7 @@ Private Sub pvShowExtEvents(oServer As cServerMonitor, rs As Recordset)
 LoopNext:
     Loop
     TraceEnd "xe.merge", dblStep, sServer & vbTab & "snap=" & rsSnap.RecordCount & " live=" & rsLive.RecordCount & " events=" & lEvents & " full=" & -bFull & " list=" & m_rsList.RecordCount
-    pvRefreshList bRefreshData, bRefreshStats
+    pvQueueRender bRefreshData, bRefreshStats
     TraceEnd "xe.total", dblStart, sServer
     Exit Sub
 EH:
@@ -917,7 +992,9 @@ Private Function pvUpdateStats() As Boolean
         m_rsStats!Opers.Value = m_rsStats!Opers.Value + 1
         pvUpdateStats = True
     End If
-    m_rsList!LastActive.Value = m_rsList!IsActive.Value
+    If m_rsList!LastActive.Value <> m_rsList!IsActive.Value Then
+        m_rsList!LastActive.Value = m_rsList!IsActive.Value
+    End If
 End Function
 
 Private Function pvGetRowKey(ByVal sServer As String, ByVal vSpid As Variant) As String
@@ -1042,7 +1119,7 @@ Private Sub pvDisconnect(sServer As String)
     If Not m_rsList Is Nothing Then
         Do While MoveRecordset(m_rsList, lIter)
             If C_Str(m_rsList!Server.Value) = sServer Then
-                m_rsList.Delete
+                pvDeleteRow pvGetRowKey(sServer, m_rsList!SPID.Value)
             End If
         Loop
         pvPrepareList
@@ -1437,7 +1514,11 @@ Private Sub mnuFile_Click(Index As Integer)
     On Error GoTo EH
     Select Case Index
     Case ucsMnuFileConnect
-        pvConnect
+        If Not m_bConnecting Then
+            m_bConnecting = True
+            pvConnect
+            m_bConnecting = False
+        End If
     Case ucsMnuFileFilter
         sFilter = InputBox("Server, program, database, host, login, status or command. Use * for wildcards, " & _
             "AND, OR, NOT and brackets to combine, quotes for text with keywords", "Filter", m_sFilter)
@@ -1514,6 +1595,11 @@ Private Sub mnuTree_Click(Index As Integer)
     Const FUNC_NAME     As String = "mnuTree_Click"
 
     On Error GoTo EH
+    '--- a connection being opened keeps the message loop going, nothing else starts meanwhile
+    If m_bConnecting Then
+        Exit Sub
+    End If
+    m_bConnecting = True
     Select Case Index
     Case ucsMnuTreeConnect
         pvConnect
@@ -1522,6 +1608,7 @@ Private Sub mnuTree_Click(Index As Integer)
     Case ucsMnuTreeProperties
         pvConnect m_sMenuServer
     End Select
+    m_bConnecting = False
     Exit Sub
 EH:
     PrintError FUNC_NAME
@@ -1607,6 +1694,11 @@ Private Sub tmrFetch_Timer()
     For Each oServer In m_cServers
         oServer.Tick
     Next
+    If m_bRenderPending Then
+        If TimerEx - m_dblLastRender >= DBL_RENDER_INTERVAL Then
+            pvRender
+        End If
+    End If
     TraceEnd "tick", dblStart
     Exit Sub
 EH:
@@ -1644,6 +1736,13 @@ Private Sub Form_Load()
 EH:
     PrintError FUNC_NAME
     Resume Next
+End Sub
+
+Private Sub Form_QueryUnload(Cancel As Integer, UnloadMode As Integer)
+    '--- a connection being opened keeps the message loop going, the window stays until it is done
+    If m_bConnecting And UnloadMode = vbFormControlMenu Then
+        Cancel = True
+    End If
 End Sub
 
 Private Sub Form_Unload(Cancel As Integer)
@@ -1692,14 +1791,16 @@ Private Sub tvwServers_DblClick()
 
     On Error GoTo EH
     sServer = tvwServers.NodeKey(tvwServers.SelectedNode)
-    If LenB(sServer) = 0 Then
+    If LenB(sServer) = 0 Or m_bConnecting Then
         Exit Sub
     End If
+    m_bConnecting = True
     If SearchCollection(m_cServers, LCase$(sServer)) Then
         pvReconnect sServer
     ElseIf Not pvIsConnected(sServer) Then
         pvConnectProfile sServer
     End If
+    m_bConnecting = False
     Exit Sub
 EH:
     PrintError FUNC_NAME
