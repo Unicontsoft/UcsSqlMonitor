@@ -404,8 +404,10 @@ Private Function pvOpen() As Boolean
     Const MIN_VERSION_EXT_EVENTS As Long = 15
     Dim oConn           As ADODB.Connection
     Dim sDriver         As String
+    Dim dblStart        As Double
 
     On Error GoTo EH
+    dblStart = TraceStart()
     Set oConn = New Connection
     oConn.ConnectionTimeout = 5
     '--- ODBC drivers cannot talk to SQL 2000 so sp_who2 mode keeps SQLOLEDB
@@ -414,6 +416,8 @@ Private Function pvOpen() As Boolean
     End If
     m_sConnectString = pvGetConnectString(sDriver)
     oConn.Open m_sConnectString
+    TraceEnd "connect.open", dblStart, cobServer.Text
+    dblStart = TraceStart()
     Set m_oCmd = New ADODB.Command
     Set m_oCmd.ActiveConnection = oConn
     m_oCmd.CommandTimeout = 5
@@ -428,6 +432,7 @@ Private Function pvOpen() As Boolean
         m_eMode = ucsMonSpWho2
     End If
     m_lRefreshRate = cobRerfesh.ItemData(cobRerfesh.ListIndex)
+    TraceEnd "connect.check", dblStart, cobServer.Text
     pvOpen = True
 QH:
     Exit Function

@@ -49,6 +49,7 @@ Private m_dblInterval               As Double
 Private m_dblLastFetch              As Double
 Private m_bDelayFetch               As Boolean
 Private m_bClosing                  As Boolean
+Private m_dblFetchStart             As Double
 
 '=========================================================================
 ' Error handling
@@ -96,6 +97,9 @@ Public Sub Init( _
             sConnectString As String, _
             sServer As String, _
             oOwner As frmMain)
+    Dim dblStart        As Double
+
+    dblStart = TraceStart()
     m_sServer = sServer
     Set m_oCmd = oCmd
     Set m_oConn = oCmd.ActiveConnection
@@ -106,10 +110,14 @@ Public Sub Init( _
     m_sConnectString = sConnectString
     m_dblInterval = 1 / lRefreshRate
     pvStart oOwner
+    TraceEnd "monitor.init", dblStart, m_sServer
 End Sub
 
 '--- opens a new connection with the settings it was first connected with, raises when that fails
 Public Sub Reconnect(oOwner As frmMain)
+    Dim dblStart        As Double
+
+    dblStart = TraceStart()
     m_bClosing = False
     Set m_oConn = New ADODB.Connection
     m_oConn.ConnectionTimeout = LNG_TIMEOUT
@@ -122,6 +130,7 @@ Public Sub Reconnect(oOwner As frmMain)
     End If
     m_dblLastFetch = 0
     pvStart oOwner
+    TraceEnd "monitor.reconnect", dblStart, m_sServer
 End Sub
 
 '--- called on every timer tick, fetches when this server's refresh interval has passed
@@ -141,8 +150,10 @@ End Sub
 '--- releases the extended events session if this was its last monitor and closes the connection
 Public Sub Shutdown()
     Const FUNC_NAME     As String = "Shutdown"
+    Dim dblStart        As Double
 
     On Error GoTo EH
+    dblStart = TraceStart()
     '--- cancelling the fetch fires FetchComplete, which must not start another one meanwhile
     m_bClosing = True
     pvCloseResult
@@ -160,6 +171,7 @@ QH:
     Set m_oCmd = Nothing
     Set m_oConn = Nothing
     Set m_oOwner = Nothing
+    TraceEnd "monitor.shutdown", dblStart, m_sServer
     Exit Sub
 EH:
     PrintError FUNC_NAME
@@ -178,11 +190,13 @@ Private Sub pvFetch()
     Const FUNC_NAME     As String = "pvFetch"
     Dim lState          As Long
     Dim oCmd            As ADODB.Command
+    Dim dblStart        As Double
 
     On Error GoTo EH
     If m_bClosing Then
         Exit Sub
     End If
+    dblStart = TraceStart()
     m_dblLastFetch = TimerEx
     If m_rsResult Is Nothing Then
         Set m_rsResult = New Recordset
@@ -196,6 +210,7 @@ Private Sub pvFetch()
     On Error GoTo EH
     If (lState And (adStateConnecting Or adStateExecuting Or adStateFetching)) <> 0 Then
         m_bDelayFetch = True
+        TraceEnd "fetch.busy", dblStart, m_sServer
         Exit Sub
     End If
     If lState = adStateOpen Then
@@ -211,6 +226,8 @@ Private Sub pvFetch()
     If Err.Number <> 0 Then
         pvTestConn
     End If
+    TraceEnd "fetch.open", dblStart, m_sServer
+    m_dblFetchStart = dblStart
     Exit Sub
 EH:
     PrintError FUNC_NAME
@@ -218,6 +235,9 @@ EH:
 End Sub
 
 Private Sub pvTestConn()
+    Dim dblStart        As Double
+
+    dblStart = TraceStart()
     On Error Resume Next
     If m_oConn.State = adStateOpen Then
         m_oConn.Execute "SELECT @@TRANCOUNT"
@@ -232,6 +252,7 @@ Private Sub pvTestConn()
             m_oExtEvents.Init m_oConn, m_bStatements
         End If
     End If
+    TraceEnd "monitor.testconn", dblStart, m_sServer
 End Sub
 
 Private Sub pvCloseResult()
@@ -274,10 +295,15 @@ End Sub
 Private Sub m_rsResult_FetchComplete(ByVal pError As ADODB.Error, adStatus As ADODB.EventStatusEnum, ByVal pRecordset As ADODB.Recordset)
     Const FUNC_NAME     As String = "m_rsResult_FetchComplete"
     Dim bDelayed        As Boolean
+    Dim dblStart        As Double
 
     On Error GoTo EH
     If m_bClosing Then
         Exit Sub
+    End If
+    dblStart = TraceStart()
+    If TraceEnabled And m_dblFetchStart <> 0 Then
+        TraceLine "fetch.roundtrip", (dblStart - m_dblFetchStart) * 1000000#, m_sServer
     End If
     If Not pError Is Nothing Then
         Exit Sub
@@ -290,6 +316,7 @@ Private Sub m_rsResult_FetchComplete(ByVal pError As ADODB.Error, adStatus As AD
     If bDelayed And Not m_oConn Is Nothing Then
         pvFetch
     End If
+    TraceEnd "fetch.complete", dblStart, m_sServer
     Exit Sub
 EH:
     PrintError FUNC_NAME

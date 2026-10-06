@@ -65,7 +65,9 @@ End Sub
 Public Sub Init(oConn As ADODB.Connection, ByVal bStatements As Boolean)
     Dim rs              As Recordset
     Dim lResult         As Long
+    Dim dblStart        As Double
 
+    dblStart = TraceStart()
     Set m_oConn = oConn
     m_bStatements = bStatements
     Set rs = m_oConn.Execute("SET NOCOUNT ON" & vbCrLf & _
@@ -75,6 +77,7 @@ Public Sub Init(oConn As ADODB.Connection, ByVal bStatements As Boolean)
     lResult = rs.Fields(0).Value
     '--- with ODBC an unread result makes the next command run on a hidden connection
     rs.Close
+    TraceEnd "xe.applock", dblStart
     If lResult < 0 Then
         On Error GoTo 0
         Err.Raise vbObjectError, , "Cannot lock " & STR_SESSION_NAME & " event session (" & lResult & ")"
@@ -98,6 +101,7 @@ Public Sub Init(oConn As ADODB.Connection, ByVal bStatements As Boolean)
     End If
     Set m_oCmd.ActiveConnection = m_oConn
     m_oCmd.CommandTimeout = 30
+    TraceEnd "xe.init", dblStart
 End Sub
 
 '--- drops the session when no other monitor holds the shared lock. Runs on a connection of
@@ -105,8 +109,10 @@ End Sub
 Public Sub DropIfLast(sConnectString As String)
     Const FUNC_NAME     As String = "DropIfLast"
     Dim oConn           As ADODB.Connection
+    Dim dblStart        As Double
 
     On Error GoTo EH
+    dblStart = TraceStart()
     Set m_oCmd = Nothing
     Set m_oConn = Nothing
     Set oConn = New ADODB.Connection
@@ -126,6 +132,7 @@ Public Sub DropIfLast(sConnectString As String)
         "    EXEC master.sys.sp_releaseapplock @Resource = N'" & STR_SESSION_NAME & "', @LockOwner = 'Session'" & vbCrLf & _
         "END", , adExecuteNoRecords
     oConn.Close
+    TraceEnd "xe.drop", dblStart
     Exit Sub
 EH:
     PrintError FUNC_NAME
@@ -212,7 +219,9 @@ End Function
 
 Private Sub pvEnsureSession()
     Dim cSql            As Collection
+    Dim dblStart        As Double
 
+    dblStart = TraceStart()
     Set cSql = New Collection
     cSql.Add "SET NOCOUNT ON"
     cSql.Add "IF NOT EXISTS (SELECT * FROM sys.server_event_sessions WHERE name = N'" & STR_SESSION_NAME & "')"
@@ -268,12 +277,15 @@ Private Sub pvEnsureSession()
         cSql.Add "END CATCH"
     End If
     m_oConn.Execute ConcatCollection(cSql), , adExecuteNoRecords
+    TraceEnd "xe.ensure", dblStart
 End Sub
 
 Private Sub pvReadTargetPath()
     Dim rs              As Recordset
     Dim lPos            As Long
+    Dim dblStart        As Double
 
+    dblStart = TraceStart()
     m_sPath = vbNullString
     m_sPattern = vbNullString
     m_bPathStale = False
@@ -289,6 +301,7 @@ Private Sub pvReadTargetPath()
     If lPos > 0 Then
         m_sPattern = Left$(m_sPath, lPos) & STR_SESSION_NAME & "*.xel"
     End If
+    TraceEnd "xe.path", dblStart
 End Sub
 
 Private Function pvGetFetchSql() As String

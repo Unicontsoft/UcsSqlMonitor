@@ -212,6 +212,10 @@ Attribute m_oFrmStats.VB_VarHelpID = -1
 Private m_cSelected         As Collection
 Private m_bInSet            As Boolean
 Private m_aColumns()        As UcsColumnInfo
+Private m_dblLastTick       As Double
+Private m_dblLastFlush      As Double
+Private m_lCellCount        As Long
+Private m_dblCellTime       As Double
 
 Private Type UcsColumnInfo
     Field                   As String
@@ -325,13 +329,18 @@ End Sub
 
 Private Sub pvRefreshUI()
     Const FUNC_NAME     As String = "pvRefreshUI"
+    Dim dblStart        As Double
 
     On Error GoTo EH
     If m_rsListSort Is Nothing Then
         Exit Sub
     End If
+    dblStart = TraceStart()
     lvwMain.Refresh
+    TraceEnd "ui.list", dblStart
+    dblStart = TraceStart()
     pvRefreshInput
+    TraceEnd "ui.input", dblStart, vbTab & "len=" & Len(txtInput.Text)
     Exit Sub
 EH:
     PrintError FUNC_NAME
@@ -389,12 +398,15 @@ End Function
 '--- ADO filters have no NOT and cannot AND groups of ORs, so rows are matched here
 Private Sub pvApplyFilter()
     Dim lIter           As Long
+    Dim dblStart        As Double
 
     If m_rsListSort Is Nothing Then
         Exit Sub
     End If
+    dblStart = TraceStart()
     If m_oFilter Is Nothing Then
         m_rsListSort.Filter = vbNullString
+        TraceEnd "filter.none", dblStart
         Exit Sub
     End If
     Do While MoveRecordset(m_rsList, lIter)
@@ -408,6 +420,7 @@ Private Sub pvApplyFilter()
             LCase$(C_Str(m_rsList!Command.Value))))
     Loop
     m_rsListSort.Filter = "IsMatch = True"
+    TraceEnd "filter.apply", dblStart, vbTab & "list=" & m_rsList.RecordCount
 End Sub
 
 Private Sub pvShowResults(oServer As cServerMonitor, rs As Recordset)
@@ -422,6 +435,19 @@ Private Sub pvShowResults(oServer As cServerMonitor, rs As Recordset)
     Dim sKey            As String
     Dim bIsActive       As Boolean
     Dim bRefreshStats   As Boolean
+    Dim dblStart        As Double
+    Dim dblStep         As Double
+    Dim lCount          As Long
+    Dim aSource()       As ADODB.Field
+    Dim aTarget()       As ADODB.Field
+    Dim lStatusIdx      As Long
+    Dim lCommandIdx     As Long
+    Dim lWaitIdx        As Long
+    Dim oSpid           As ADODB.Field
+    Dim sValue          As String
+    Dim cSeen           As Collection
+    Dim lAdded          As Long
+    Dim lWrites         As Long
 
     On Error GoTo EH
     If rs Is Nothing Then
@@ -434,48 +460,101 @@ Private Sub pvShowResults(oServer As cServerMonitor, rs As Recordset)
         pvShowExtEvents oServer, rs
         Exit Sub
     End If
+    dblStart = TraceStart()
     sServer = oServer.Server
     pvPrepareList
+    dblStep = TraceStart()
     '--- sync rs, sp_who2 columns map to list fields by position up to REQUESTID
     Set m_cList = InitIndexCollection(m_rsList, "Server", "SPID")
-    Do While MoveRecordset(rs, lIter)
-        sKey = pvGetRowKey(sServer, Trim$(C_Str(rs!SPID.Value)))
+    TraceEnd "sp_who2.index", dblStep, sServer
+    dblStep = TraceStart()
+    '--- each column is looked up once, a Field follows its recordset's current row
+    If rs.RecordCount > 0 Then
+        For Each oFld In rs.Fields
+            If oFld.Name = "REQUESTID" Then
+                Exit For
+            End If
+            lCount = lCount + 1
+        Next
+    End If
+    If lCount > 0 Then
+        ReDim aSource(0 To lCount - 1) As ADODB.Field
+        ReDim aTarget(0 To lCount - 1) As ADODB.Field
+        lStatusIdx = -1
+        lCommandIdx = -1
+        lWaitIdx = -1
+        For lIdx = 0 To lCount - 1
+            Set aSource(lIdx) = rs.Fields(lIdx)
+            Set aTarget(lIdx) = m_rsList.Fields(lIdx)
+            Select Case aTarget(lIdx).Name
+            Case "Status"
+                lStatusIdx = lIdx
+            Case "Command"
+                lCommandIdx = lIdx
+            Case "Wait"
+                lWaitIdx = lIdx
+            End Select
+        Next
+        Set oSpid = rs.Fields("SPID")
+        rs.MoveFirst
+    End If
+    Set cSeen = New Collection
+    Do While lCount > 0
+        If rs.EOF Then
+            Exit Do
+        End If
+        sKey = pvGetRowKey(sServer, Trim$(C_Str(oSpid.Value)))
+        '--- rows the list does not show are skipped instead of added and deleted again on
+        '--- every refresh, and of the rows of a parallel query only the first is the session
+        If Not pvIsShownProcess(oServer, oSpid, aSource, lStatusIdx, lCommandIdx) Then
+            GoTo NextRow
+        End If
+        If SearchCollection(cSeen, sKey) Then
+            GoTo NextRow
+        End If
+        cSeen.Add True, sKey
         If Not SetBookmark(m_rsList, m_cList, sKey) Then
             m_rsList.AddNew
             m_rsList!Server.Value = sServer
             m_rsList!IsActive.Value = False
             m_rsList!LastActive.Value = False
-            m_rsList!SPID.Value = Trim$(C_Str(rs!SPID.Value))
+            m_rsList!SPID.Value = Trim$(C_Str(oSpid.Value))
             RemoveCollection m_cList, sKey
             m_cList.Add m_rsList.Bookmark, sKey
+            lAdded = lAdded + 1
         Else
-            Debug.Assert C_Str(m_rsList!SPID.Value) = Trim$(C_Str(rs!SPID.Value))
+            Debug.Assert C_Str(m_rsList!SPID.Value) = Trim$(C_Str(oSpid.Value))
         End If
-        lIdx = 0
-        m_rsList!IsActive.Value = False
-        For Each oFld In rs.Fields
-            If oFld.Name = "REQUESTID" Then
-                Exit For
+        bIsActive = False
+        For lIdx = 0 To lCount - 1
+            sValue = Trim$(C_Str(aSource(lIdx).Value))
+            If lIdx = lWaitIdx And sValue = "0" Then
+                sValue = "."
+            ElseIf lIdx = lCommandIdx And sValue = "AWAITING COMMAND" Then
+                sValue = vbNullString
             End If
-            vValue = Trim$(C_Str(oFld.Value))
-            If m_rsList(lIdx).Name = "Wait" And Trim$(C_Str(vValue)) = "0" Then
-                vValue = "."
-            ElseIf m_rsList(lIdx).Name = "Command" And vValue = "AWAITING COMMAND" Then
-                vValue = vbNullString
-            End If
-            If C_Str(m_rsList(lIdx).Value) <> vValue Then
-                Debug.Assert m_rsList(lIdx).Name <> "SPID"
-                If Not IsNull(m_rsList(lIdx).Value) Then
-                    m_rsList!IsActive.Value = True
+            '--- only changes are written and a Null becomes the empty string once
+            vValue = aTarget(lIdx).Value
+            If C_Str(vValue) <> sValue Then
+                If Not IsNull(vValue) Then
+                    bIsActive = True
                 End If
-                m_rsList(lIdx).Value = C_Str(vValue)
+                aTarget(lIdx).Value = sValue
                 bRefreshData = True
-            Else
-                m_rsList(lIdx).Value = C_Str(m_rsList(lIdx).Value)
+                lWrites = lWrites + 1
+            ElseIf IsNull(vValue) Then
+                aTarget(lIdx).Value = sValue
+                lWrites = lWrites + 1
             End If
-            lIdx = lIdx + 1
         Next
+        If m_rsList!IsActive.Value <> bIsActive Then
+            m_rsList!IsActive.Value = bIsActive
+        End If
+NextRow:
+        rs.MoveNext
     Loop
+    TraceEnd "sp_who2.sync", dblStep, sServer & vbTab & "rows=" & rs.RecordCount & " shown=" & cSeen.Count & " added=" & lAdded & " writes=" & lWrites
+    dblStep = TraceStart()
     If m_rsList.RecordCount <> 0 Then
         Set cResult = InitIndexCollection(rs, "SPID")
         lIter = 0
@@ -513,7 +592,9 @@ Private Sub pvShowResults(oServer As cServerMonitor, rs As Recordset)
                     m_rsStats!Opers.Value = m_rsStats!Opers.Value + 1
                     bRefreshStats = True
                 End If
-                m_rsList!LastActive.Value = m_rsList!IsActive.Value
+                If m_rsList!LastActive.Value <> m_rsList!IsActive.Value Then
+                    m_rsList!LastActive.Value = m_rsList!IsActive.Value
+                End If
             Else
                 RemoveCollection m_cList, pvGetRowKey(sServer, m_rsList!SPID.Value)
                 m_rsList.Delete
@@ -521,7 +602,9 @@ Private Sub pvShowResults(oServer As cServerMonitor, rs As Recordset)
 LoopNext:
         Loop
     End If
+    TraceEnd "sp_who2.stats", dblStep, sServer & vbTab & "rows=" & rs.RecordCount & " list=" & m_rsList.RecordCount
     pvRefreshList bRefreshData, bRefreshStats
+    TraceEnd "sp_who2.total", dblStart, sServer
     Exit Sub
 EH:
     If MsgBox(Error & vbCrLf & vbCrLf & MSG_CONTINUE, vbQuestion Or vbYesNo, MODULE_NAME & "." & FUNC_NAME & "(" & Erl & ")") = vbYes Then
@@ -531,8 +614,36 @@ EH:
     pvDisconnect oServer.Server
 End Sub
 
+'--- the sp_who2 rows the list shows, the same rule its second pass removes the others by
+Private Function pvIsShownProcess( _
+            oServer As cServerMonitor, _
+            oSpid As ADODB.Field, _
+            aSource() As ADODB.Field, _
+            ByVal lStatusIdx As Long, _
+            ByVal lCommandIdx As Long) As Boolean
+    If oServer.SystemProcesses Then
+        pvIsShownProcess = True
+        Exit Function
+    End If
+    If C_Dbl(Trim$(C_Str(oSpid.Value))) <= 50 Then
+        Exit Function
+    End If
+    If lStatusIdx >= 0 Then
+        If LCase$(Trim$(C_Str(aSource(lStatusIdx).Value))) = "background" Then
+            Exit Function
+        End If
+    End If
+    If lCommandIdx >= 0 Then
+        If LCase$(Trim$(C_Str(aSource(lCommandIdx).Value))) = "task manager" Then
+            Exit Function
+        End If
+    End If
+    pvIsShownProcess = True
+End Function
+
 Private Sub pvPrepareList()
     Dim sSort           As String
+    Dim dblStart        As Double
 
     If m_rsList Is Nothing Then
         Set m_rsList = CreateRecordset( _
@@ -562,12 +673,16 @@ Private Sub pvPrepareList()
         pvShowSortOrder
     Else
         sSort = m_rsListSort.Sort
+        dblStart = TraceStart()
         With New PropertyBag
             .WriteProperty "rs", m_rsList
             Set m_rsList = .ReadProperty("rs")
         End With
+        TraceEnd "prepare.persist", dblStart, vbTab & "list=" & m_rsList.RecordCount
+        dblStart = TraceStart()
         Set m_rsListSort = m_rsList.Clone
         m_rsListSort.Sort = sSort
+        TraceEnd "prepare.clone_sort", dblStart
         pvApplyFilter
     End If
     If m_rsStats Is Nothing Then
@@ -613,24 +728,34 @@ Private Function pvIsSortDesc(sElem As String) As Boolean
 End Function
 
 Private Sub pvRefreshList(ByVal bRefreshData As Boolean, ByVal bRefreshStats As Boolean)
+    Dim dblStart        As Double
+
     lvwMain.Redraw = False
     '--- rows added or changed since the list was prepared are matched again
     If Not m_oFilter Is Nothing Then
         pvApplyFilter
     End If
     If lvwMain.RowCount <> m_rsListSort.RecordCount Then
+        dblStart = TraceStart()
         m_bInSet = True
         lvwMain.RowCount = m_rsListSort.RecordCount
         m_bInSet = False
         bRefreshData = True
+        TraceEnd "refresh.rowcount", dblStart, vbTab & "rows=" & m_rsListSort.RecordCount
     End If
     If bRefreshData Then
+        dblStart = TraceStart()
         Set pvSelectedRows = m_cSelected
+        TraceEnd "refresh.selection", dblStart, vbTab & "selected=" & m_cSelected.Count & " rows=" & lvwMain.RowCount
         pvRefreshUI
     End If
+    dblStart = TraceStart()
     lvwMain.Redraw = True
+    TraceEnd "refresh.redraw", dblStart
     If bRefreshStats And Not m_oFrmStats Is Nothing Then
+        dblStart = TraceStart()
         m_oFrmStats.frRefresh m_rsStats
+        TraceEnd "refresh.stats", dblStart
     End If
 End Sub
 
@@ -652,14 +777,21 @@ Private Sub pvShowExtEvents(oServer As cServerMonitor, rs As Recordset)
     Dim cActive         As Collection
     Dim bIsActive       As Boolean
     Dim bRefreshStats   As Boolean
+    Dim dblStart        As Double
+    Dim dblStep         As Double
+    Dim lEvents         As Long
 
     On Error GoTo EH
+    dblStart = TraceStart()
     sServer = oServer.Server
     If Not oServer.ExtEvents.frReadInfo(rs, bFull, lLost) Then
         Exit Sub
     End If
     pvPrepareList
+    dblStep = TraceStart()
     Set m_cList = InitIndexCollection(m_rsList, "Server", "SPID")
+    TraceEnd "xe.index", dblStep, sServer
+    dblStep = TraceStart()
     '--- 2. sessions snapshot, only a full one has every SPID so missing ones are gone
     Set rsSnap = rs.NextRecordset
     Set cSeen = New Collection
@@ -703,6 +835,7 @@ Private Sub pvShowExtEvents(oServer As cServerMonitor, rs As Recordset)
             cActive.Add True, sKey
             bRefreshData = True
         End If
+        lEvents = lEvents + 1
     Loop
     lIter = 0
     Do While MoveRecordset(m_rsList, lIter)
@@ -755,7 +888,9 @@ Private Sub pvShowExtEvents(oServer As cServerMonitor, rs As Recordset)
         End If
 LoopNext:
     Loop
+    TraceEnd "xe.merge", dblStep, sServer & vbTab & "snap=" & rsSnap.RecordCount & " live=" & rsLive.RecordCount & " events=" & lEvents & " full=" & -bFull & " list=" & m_rsList.RecordCount
     pvRefreshList bRefreshData, bRefreshStats
+    TraceEnd "xe.total", dblStart, sServer
     Exit Sub
 EH:
     PrintError FUNC_NAME
@@ -821,14 +956,17 @@ Private Sub pvConnectProfile(sServer As String)
     Dim bSystemProcesses As Boolean
     Dim bStatements     As Boolean
     Dim sConnectString  As String
+    Dim dblStart        As Double
 
     On Error GoTo EH
+    dblStart = TraceStart()
     Screen.MousePointer = vbHourglass
     Set oFrmConnect = New frmConnect
     If oFrmConnect.frConnectProfile(sServer, oCmd, eMode, lRefreshRate, bSystemProcesses, bStatements, sConnectString) Then
         pvAddServer sServer, oCmd, eMode, lRefreshRate, bSystemProcesses, bStatements, sConnectString
     End If
     Screen.MousePointer = vbDefault
+    TraceEnd "connect.profile", dblStart, sServer
     Exit Sub
 EH:
     Screen.MousePointer = vbDefault
@@ -980,12 +1118,15 @@ End Function
 
 Private Sub pvDisconnectAll()
     Dim oServer         As cServerMonitor
+    Dim dblStart        As Double
 
+    dblStart = TraceStart()
     tmrFetch.Enabled = False
     For Each oServer In m_cServers
         oServer.Shutdown
     Next
     Set m_cServers = New Collection
+    TraceEnd "disconnect.all", dblStart
 End Sub
 
 Private Sub pvShowServers(Optional Selected As String)
@@ -1197,8 +1338,10 @@ End Sub
 Private Sub lvwMain_GetCellText(ByVal Row As Long, ByVal Col As Long, Text As String)
     Const FUNC_NAME     As String = "lvwMain_GetCellText"
     Dim vValue          As Variant
+    Dim dblStart        As Double
 
     On Error GoTo EH
+    dblStart = TraceStart()
     If Not pvMoveToRow(Row) Then
         Exit Sub
     End If
@@ -1210,6 +1353,10 @@ Private Sub lvwMain_GetCellText(ByVal Row As Long, ByVal Col As Long, Text As St
             Text = C_Str(vValue)
         End If
     End With
+    If TraceEnabled Then
+        m_lCellCount = m_lCellCount + 1
+        m_dblCellTime = m_dblCellTime + TimerEx - dblStart
+    End If
     Exit Sub
 EH:
     PrintError FUNC_NAME
@@ -1264,11 +1411,14 @@ End Sub
 
 Private Sub lvwMain_SelectionChanged()
     Const FUNC_NAME     As String = "lvwMain_SelectionChanged"
+    Dim dblStart        As Double
 
     On Error GoTo EH
     If Not m_bInSet Then
+        dblStart = TraceStart()
         pvRefreshInput
         Set m_cSelected = pvSelectedRows
+        TraceEnd "selection.changed", dblStart, vbTab & "selected=" & m_cSelected.Count
     End If
     Exit Sub
 EH:
@@ -1433,11 +1583,31 @@ End Sub
 Private Sub tmrFetch_Timer()
     Const FUNC_NAME     As String = "tmrFetch_Timer"
     Dim oServer         As cServerMonitor
+    Dim dblStart        As Double
 
     On Error GoTo EH
+    dblStart = TraceStart()
+    If TraceEnabled Then
+        '--- a gap much over the interval is time the UI thread was busy elsewhere
+        If m_dblLastTick <> 0 Then
+            TraceLine "tick.gap", (dblStart - m_dblLastTick) * 1000000#
+        End If
+        m_dblLastTick = dblStart
+        If m_lCellCount > 0 Then
+            TraceLine "paint.cells", m_dblCellTime * 1000000#, CStr(m_lCellCount)
+            m_lCellCount = 0
+            m_dblCellTime = 0
+        End If
+        If dblStart - m_dblLastFlush > 1 Then
+            TraceFlush
+            m_dblLastFlush = dblStart
+            TraceEnd "trace.flush", dblStart
+        End If
+    End If
     For Each oServer In m_cServers
         oServer.Tick
     Next
+    TraceEnd "tick", dblStart
     Exit Sub
 EH:
     PrintError FUNC_NAME
@@ -1448,6 +1618,7 @@ Private Sub Form_Load()
     Const FUNC_NAME     As String = "Form_Load"
 
     On Error GoTo EH
+    TraceInit
     Set m_cSelected = New Collection
     Set m_cServers = New Collection
     tmrFetch.Interval = LNG_TICK_INTERVAL
@@ -1496,6 +1667,7 @@ Private Sub Form_Unload(Cancel As Integer)
         m_hTreeImages = 0
     End If
     TerminateGdiplus
+    TraceFlush
     Exit Sub
 EH:
     PrintError FUNC_NAME

@@ -457,6 +457,11 @@ End Type
 Public Const STR_APP_NAME      As String = "Ucs SQL Monitor"
 
 Private m_hGdiPlus                  As LongPtr
+Private m_bTrace                    As Boolean
+Private m_sTraceFile                As String
+Private m_aTrace()                  As String
+Private m_lTraceCount               As Long
+Private m_dblTraceBase              As Double
 
 '=========================================================================
 ' Error handling
@@ -494,6 +499,10 @@ Public Property Get TimerEx() As Double
     Call QueryPerformanceFrequency(cFreq)
     Call QueryPerformanceCounter(cValue)
     TimerEx = cValue / cFreq
+End Property
+
+Public Property Get TraceEnabled() As Boolean
+    TraceEnabled = m_bTrace
 End Property
 
 
@@ -1079,6 +1088,62 @@ Public Function ConcatCollection(oCol As Collection, Optional Separator As Strin
         Next
     End If
 End Function
+
+'--- timing trace, on with /trace on the command line. Lines are buffered and
+'--- appended to %TEMP%\UcsSqlMonitor-trace.log by TraceFlush, times in microseconds
+Public Sub TraceInit()
+    m_bTrace = (InStr(1, Command$, "/trace", vbTextCompare) > 0)
+    If Not m_bTrace Then
+        Exit Sub
+    End If
+    m_sTraceFile = Environ$("TEMP") & "\UcsSqlMonitor-trace.log"
+    If LenB(Dir$(m_sTraceFile)) <> 0 Then
+        Kill m_sTraceFile
+    End If
+    ReDim m_aTrace(0 To 1023) As String
+    m_lTraceCount = 0
+    m_dblTraceBase = TimerEx
+    TraceLine "trace.start", 0, "at_us" & vbTab & "name" & vbTab & "us" & vbTab & "info"
+End Sub
+
+Public Function TraceStart() As Double
+    If m_bTrace Then
+        TraceStart = TimerEx
+    End If
+End Function
+
+Public Sub TraceEnd(sName As String, ByVal dblStart As Double, Optional sInfo As String)
+    If m_bTrace Then
+        TraceLine sName, (TimerEx - dblStart) * 1000000#, sInfo
+    End If
+End Sub
+
+Public Sub TraceLine(sName As String, ByVal dblMicro As Double, Optional sInfo As String)
+    If Not m_bTrace Then
+        Exit Sub
+    End If
+    If m_lTraceCount > UBound(m_aTrace) Then
+        ReDim Preserve m_aTrace(0 To 2 * m_lTraceCount - 1) As String
+    End If
+    m_aTrace(m_lTraceCount) = CLng((TimerEx - m_dblTraceBase) * 1000000#) & vbTab & sName & vbTab & CLng(dblMicro) & vbTab & sInfo
+    m_lTraceCount = m_lTraceCount + 1
+End Sub
+
+Public Sub TraceFlush()
+    Dim nFile           As Integer
+    Dim lIdx            As Long
+
+    If Not m_bTrace Or m_lTraceCount = 0 Then
+        Exit Sub
+    End If
+    nFile = FreeFile
+    Open m_sTraceFile For Append As #nFile
+    For lIdx = 0 To m_lTraceCount - 1
+        Print #nFile, m_aTrace(lIdx)
+    Next
+    Close #nFile
+    m_lTraceCount = 0
+End Sub
 
 '--- GDI+ is started where the program starts and shut down where it ends;
 '--- everything that draws through it assumes it is already up
