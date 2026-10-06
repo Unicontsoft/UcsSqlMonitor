@@ -31,6 +31,7 @@ Private Const MODULE_NAME As String = "cServerMonitor"
 Private Const ERR_NO_MORE_RESULTS       As Long = &H40EC9
 Private Const ERR_SQL_DB_CHANGED        As Long = 5701
 Private Const ERR_SQL_LANG_CHANGED      As Long = 5703
+Private Const STR_ODBC_NO_CURSOR        As String = "Executing SQL directly; no cursor"
 Private Const LNG_TIMEOUT               As Long = 5
 Private Const DBL_RETRY_MIN             As Double = 1
 Private Const DBL_RETRY_MAX             As Double = 30
@@ -55,6 +56,8 @@ Private m_dblFetchStart             As Double
 Private m_bReopening                As Boolean
 Private m_dblRetryAt                As Double
 Private m_dblRetryDelay             As Double
+Private m_oPopulateCmd               As ADODB.Command
+Private m_bPopulating               As Boolean
 
 '=========================================================================
 ' Error handling
@@ -128,9 +131,7 @@ Public Sub Reconnect(oOwner As frmMain)
     m_dblRetryDelay = 0
     Set m_oConn = New ADODB.Connection
     m_oConn.ConnectionTimeout = LNG_TIMEOUT
-    With New cAsyncOpen
-        .OpenConnection m_oConn, m_sConnectString
-    End With
+    m_oConn.Open m_sConnectString
     Set m_oCmd = New ADODB.Command
     Set m_oCmd.ActiveConnection = m_oConn
     m_oCmd.CommandTimeout = LNG_TIMEOUT
@@ -219,6 +220,11 @@ Private Sub pvFetch()
     End If
     dblStart = TraceStart()
     m_dblLastFetch = TimerEx
+    If m_bPopulating Then
+        m_bDelayFetch = True
+        TraceEnd "fetch.busy", dblStart, m_sServer
+        Exit Sub
+    End If
     If m_rsResult Is Nothing Then
         Set m_rsResult = New Recordset
         m_rsResult.CursorLocation = adUseClient
@@ -238,18 +244,27 @@ Private Sub pvFetch()
     If lState = adStateOpen Then
         m_rsResult.Close
     End If
+    m_dblFetchStart = dblStart
     If m_eMode = ucsMonExtEvents Then
-        Set oCmd = m_oExtEvents.FetchCommand(m_bSystemProcesses)
-    Else
-        Set oCmd = m_oCmd
+        '--- Extended Events fill the session's tables first, ExecuteComplete then fetches them
+        Set m_oPopulateCmd = m_oExtEvents.FetchCommand(m_bSystemProcesses)
+        m_bPopulating = True
+        On Error Resume Next
+        m_oPopulateCmd.Execute , , adAsyncExecute Or adExecuteNoRecords
+        If Err.Number <> 0 Then
+            m_bPopulating = False
+            pvTestConn
+        End If
+        TraceEnd "fetch.open", dblStart, m_sServer
+        Exit Sub
     End If
+    Set oCmd = m_oCmd
     On Error Resume Next
     m_rsResult.Open oCmd, , adOpenStatic, adLockBatchOptimistic, adAsyncExecute Or adAsyncFetch
     If Err.Number <> 0 Then
         pvTestConn
     End If
     TraceEnd "fetch.open", dblStart, m_sServer
-    m_dblFetchStart = dblStart
     Exit Sub
 EH:
     PrintError FUNC_NAME
@@ -305,6 +320,10 @@ End Sub
 
 Private Sub pvCloseResult()
     On Error GoTo QH
+    If m_bPopulating Then
+        m_bPopulating = False
+        m_oPopulateCmd.Cancel
+    End If
     If m_rsResult Is Nothing Then
         Exit Sub
     End If
@@ -354,6 +373,44 @@ EH:
     pvTestConn
 End Sub
 
+'--- the populate batch is done, its results are fetched asynchronously like sp_who2's
+Private Sub m_oConn_ExecuteComplete(ByVal RecordsAffected As Long, ByVal pError As ADODB.Error, adStatus As ADODB.EventStatusEnum, ByVal pCommand As ADODB.Command, ByVal pRecordset As ADODB.Recordset, ByVal pConnection As ADODB.Connection)
+    Const FUNC_NAME     As String = "m_oConn_ExecuteComplete"
+
+    On Error GoTo EH
+    If Not m_bPopulating Or pCommand Is Nothing Then
+        Exit Sub
+    End If
+    If Not pCommand Is m_oPopulateCmd Then
+        Exit Sub
+    End If
+    m_bPopulating = False
+    If m_bClosing Then
+        Exit Sub
+    End If
+    If TraceEnabled Then
+        TraceLine "fetch.populate", (TimerEx - m_dblFetchStart) * 1000000#, m_sServer
+    End If
+    If adStatus = adStatusErrorsOccurred Then
+        If Not pError Is Nothing Then
+            TraceLine "fetch.populate.error", 0, m_sServer & vbTab & pError.Description
+        End If
+        pvTestConn
+        Exit Sub
+    End If
+    If m_rsResult Is Nothing Then
+        Set m_rsResult = New Recordset
+        m_rsResult.CursorLocation = adUseClient
+    ElseIf (m_rsResult.State And adStateOpen) <> 0 Then
+        m_rsResult.Close
+    End If
+    m_rsResult.Open m_oExtEvents.ResultCommand, , adOpenStatic, adLockBatchOptimistic, adAsyncExecute Or adAsyncFetch
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    pvTestConn
+End Sub
+
 Private Sub m_oConn_InfoMessage(ByVal pError As ADODB.Error, adStatus As ADODB.EventStatusEnum, ByVal pConnection As ADODB.Connection)
     Const FUNC_NAME     As String = "m_oConn_InfoMessage"
 
@@ -363,6 +420,10 @@ Private Sub m_oConn_InfoMessage(ByVal pError As ADODB.Error, adStatus As ADODB.E
     Case ERR_SQL_DB_CHANGED, ERR_SQL_LANG_CHANGED
         Exit Sub
     End Select
+    '--- and the driver's notice on a batch run without a cursor, like the populate one
+    If InStr(pError.Description, STR_ODBC_NO_CURSOR) > 0 Then
+        Exit Sub
+    End If
     If pError.Number <> ERR_NO_MORE_RESULTS Then
         MsgBox m_sServer & ": " & pError.Description, vbExclamation
     End If

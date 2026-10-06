@@ -184,7 +184,6 @@ Private m_oCmd              As ADODB.Command
 Private m_lRefreshRate      As Long
 Private m_cProfiles         As Collection
 Private m_sConnectString    As String
-Private m_bOpening          As Boolean
 
 '=========================================================================
 ' Error handling
@@ -349,12 +348,20 @@ EH:
 End Function
 
 '--- the servers of the saved profiles, the last used first
-Friend Function frGetServers() As Collection
+'--- with their modes keyed by the lower case server, sp_who2 only when a profile says so
+Friend Function frGetServers(Optional cModes As Collection) As Collection
     Dim lIdx            As Long
+    Dim sProfile        As String
+    Dim sServer         As String
 
     Set frGetServers = New Collection
+    Set cModes = New Collection
     For lIdx = C_Lng(GetSetting(STR_APP_NAME, STR_REG_CONNECT, STR_REG_COUNT, 0)) To 1 Step -1
-        frGetServers.Add pvGetServer(GetSetting(STR_APP_NAME, STR_REG_CONNECT, STR_REG_PROFILE & lIdx, vbNullString))
+        sProfile = GetSetting(STR_APP_NAME, STR_REG_CONNECT, STR_REG_PROFILE & lIdx, vbNullString)
+        sServer = pvGetServer(sProfile)
+        frGetServers.Add sServer
+        RemoveCollection cModes, LCase$(sServer)
+        cModes.Add IIf(C_Bool(At(Split(sProfile, STR_DELIM), 5)), ucsMonSpWho2, ucsMonExtEvents), LCase$(sServer)
     Next
     Unload Me
 End Function
@@ -416,11 +423,7 @@ Private Function pvOpen() As Boolean
         sDriver = pvGetOdbcDriver()
     End If
     m_sConnectString = pvGetConnectString(sDriver)
-    m_bOpening = True
-    With New cAsyncOpen
-        .OpenConnection oConn, m_sConnectString
-    End With
-    m_bOpening = False
+    oConn.Open m_sConnectString
     TraceEnd "connect.open", dblStart, cobServer.Text
     dblStart = TraceStart()
     Set m_oCmd = New ADODB.Command
@@ -440,7 +443,6 @@ Private Function pvOpen() As Boolean
     TraceEnd "connect.check", dblStart, cobServer.Text
     pvOpen = True
 QH:
-    m_bOpening = False
     Exit Function
 EH:
     MsgBox cobServer.Text & ": " & Error, vbExclamation
@@ -513,13 +515,6 @@ End Function
 '=========================================================================
 ' Control events
 '=========================================================================
-
-Private Sub Form_QueryUnload(Cancel As Integer, UnloadMode As Integer)
-    '--- the connection being opened keeps the message loop going in the meantime
-    If m_bOpening And UnloadMode = vbFormControlMenu Then
-        Cancel = True
-    End If
-End Sub
 
 Private Sub cobServer_Click()
     Const FUNC_NAME     As String = "cobServer_Click"

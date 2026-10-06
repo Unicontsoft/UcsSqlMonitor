@@ -220,7 +220,6 @@ Private m_bRenderPending    As Boolean
 Private m_bRenderData       As Boolean
 Private m_bRenderStats      As Boolean
 Private m_dblLastRender     As Double
-Private m_bConnecting       As Boolean
 Private m_dblLastTick       As Double
 Private m_dblLastFlush      As Double
 Private m_lCellCount        As Long
@@ -1213,13 +1212,19 @@ Private Sub pvShowServers(Optional Selected As String)
     Dim hRoot           As LongPtr
     Dim vName           As Variant
     Dim hNode           As LongPtr
+    Dim cModes          As Collection
+    Dim vMode           As Variant
+    Dim sText           As String
 
     Set oFrmConnect = New frmConnect
-    Set cNames = oFrmConnect.frGetServers()
+    Set cNames = oFrmConnect.frGetServers(cModes)
+    '--- a monitored server shows the mode it runs in, the others the one of their profile
     For Each oServer In m_cServers
         If Not pvContainsText(cNames, oServer.Server) Then
             cNames.Add oServer.Server
         End If
+        RemoveCollection cModes, LCase$(oServer.Server)
+        cModes.Add oServer.Mode, LCase$(oServer.Server)
     Next
     '--- updated in place, rebuilding it inside a tree notification upsets the tree
     hRoot = tvwServers.GetRootNode()
@@ -1229,9 +1234,15 @@ Private Sub pvShowServers(Optional Selected As String)
     End If
     For Each vName In cNames
         If LenB(vName) <> 0 Then
+            If Not SearchCollection(cModes, LCase$(vName), RetVal:=vMode) Then
+                vMode = ucsMonExtEvents
+            End If
+            sText = vName & IIf(vMode = ucsMonSpWho2, " (sp_who2)", " (XE)")
             hNode = tvwServers.NodeByKey(vName)
             If hNode = 0 Then
-                hNode = tvwServers.AddNode(hRoot, vName, vName, Image:=ucsImgServer)
+                hNode = tvwServers.AddNode(hRoot, vName, sText, Image:=ucsImgServer)
+            ElseIf tvwServers.NodeText(hNode) <> sText Then
+                tvwServers.NodeText(hNode) = sText
             End If
             tvwServers.NodeBold(hNode) = pvIsConnected(C_Str(vName))
             If LCase$(vName) = LCase$(Selected) Then
@@ -1514,11 +1525,7 @@ Private Sub mnuFile_Click(Index As Integer)
     On Error GoTo EH
     Select Case Index
     Case ucsMnuFileConnect
-        If Not m_bConnecting Then
-            m_bConnecting = True
-            pvConnect
-            m_bConnecting = False
-        End If
+        pvConnect
     Case ucsMnuFileFilter
         sFilter = InputBox("Server, program, database, host, login, status or command. Use * for wildcards, " & _
             "AND, OR, NOT and brackets to combine, quotes for text with keywords", "Filter", m_sFilter)
@@ -1595,11 +1602,6 @@ Private Sub mnuTree_Click(Index As Integer)
     Const FUNC_NAME     As String = "mnuTree_Click"
 
     On Error GoTo EH
-    '--- a connection being opened keeps the message loop going, nothing else starts meanwhile
-    If m_bConnecting Then
-        Exit Sub
-    End If
-    m_bConnecting = True
     Select Case Index
     Case ucsMnuTreeConnect
         pvConnect
@@ -1608,7 +1610,6 @@ Private Sub mnuTree_Click(Index As Integer)
     Case ucsMnuTreeProperties
         pvConnect m_sMenuServer
     End Select
-    m_bConnecting = False
     Exit Sub
 EH:
     PrintError FUNC_NAME
@@ -1738,13 +1739,6 @@ EH:
     Resume Next
 End Sub
 
-Private Sub Form_QueryUnload(Cancel As Integer, UnloadMode As Integer)
-    '--- a connection being opened keeps the message loop going, the window stays until it is done
-    If m_bConnecting And UnloadMode = vbFormControlMenu Then
-        Cancel = True
-    End If
-End Sub
-
 Private Sub Form_Unload(Cancel As Integer)
     Const FUNC_NAME     As String = "Form_Unload"
 
@@ -1791,16 +1785,14 @@ Private Sub tvwServers_DblClick()
 
     On Error GoTo EH
     sServer = tvwServers.NodeKey(tvwServers.SelectedNode)
-    If LenB(sServer) = 0 Or m_bConnecting Then
+    If LenB(sServer) = 0 Then
         Exit Sub
     End If
-    m_bConnecting = True
     If SearchCollection(m_cServers, LCase$(sServer)) Then
         pvReconnect sServer
     ElseIf Not pvIsConnected(sServer) Then
         pvConnectProfile sServer
     End If
-    m_bConnecting = False
     Exit Sub
 EH:
     PrintError FUNC_NAME

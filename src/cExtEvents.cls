@@ -40,6 +40,7 @@ Private Const ERR_SQL_XE_STARTED        As Long = 25705
 
 Private m_oConn                     As ADODB.Connection
 Private m_oCmd                      As ADODB.Command
+Private m_oResultCmd                As ADODB.Command
 Private m_bStatements               As Boolean
 Private m_sPath                     As String
 Private m_sPattern                  As String
@@ -84,6 +85,7 @@ Public Sub Init(oConn As ADODB.Connection, ByVal bStatements As Boolean)
     End If
     pvEnsureSession
     pvReadTargetPath
+    pvCreateResultTables
     If m_oCmd Is Nothing Then
         Set m_oCmd = New ADODB.Command
         m_oCmd.CommandText = pvGetFetchSql()
@@ -101,6 +103,12 @@ Public Sub Init(oConn As ADODB.Connection, ByVal bStatements As Boolean)
     End If
     Set m_oCmd.ActiveConnection = m_oConn
     m_oCmd.CommandTimeout = 30
+    If m_oResultCmd Is Nothing Then
+        Set m_oResultCmd = New ADODB.Command
+        m_oResultCmd.CommandText = pvGetResultSql()
+    End If
+    Set m_oResultCmd.ActiveConnection = m_oConn
+    m_oResultCmd.CommandTimeout = 30
     TraceEnd "xe.init", dblStart
 End Sub
 
@@ -114,12 +122,12 @@ Public Sub DropIfLast(sConnectString As String)
     On Error GoTo EH
     dblStart = TraceStart()
     Set m_oCmd = Nothing
+    Set m_oResultCmd = Nothing
     Set m_oConn = Nothing
     Set oConn = New ADODB.Connection
     oConn.ConnectionTimeout = 5
     oConn.Open sConnectString
-    oConn.Execute "SET NOCOUNT ON" & vbCrLf & _
-        "DECLARE @rc INT" & vbCrLf & _
+    oConn.Execute "DECLARE @rc INT" & vbCrLf & _
         "EXEC @rc = master.sys.sp_getapplock @Resource = N'" & STR_SESSION_NAME & "', @LockMode = 'Exclusive', @LockOwner = 'Session', @LockTimeout = 1000" & vbCrLf & _
         "IF @rc >= 0" & vbCrLf & _
         "BEGIN" & vbCrLf & _
@@ -138,7 +146,12 @@ EH:
     PrintError FUNC_NAME
 End Sub
 
-'--- the per-tick batch returning info, sessions snapshot, live requests and new events
+'--- the batch returning what the last populate batch left in the session's tables
+Public Property Get ResultCommand() As ADODB.Command
+    Set ResultCommand = m_oResultCmd
+End Property
+
+'--- the per-tick populate batch: reads new events and fills the session's tables, returns nothing
 Public Function FetchCommand(ByVal bSystem As Boolean) As ADODB.Command
     Dim bFull           As Boolean
 
@@ -223,7 +236,6 @@ Private Sub pvEnsureSession()
 
     dblStart = TraceStart()
     Set cSql = New Collection
-    cSql.Add "SET NOCOUNT ON"
     cSql.Add "IF NOT EXISTS (SELECT * FROM sys.server_event_sessions WHERE name = N'" & STR_SESSION_NAME & "')"
     cSql.Add "BEGIN TRY"
     cSql.Add "CREATE EVENT SESSION [" & STR_SESSION_NAME & "] ON SERVER"
@@ -374,23 +386,22 @@ Private Function pvGetFetchSql() As String
     cSql.Add "    SELECT @new_file = @file, @new_offset = @offset"
     cSql.Add "IF @cur_dropped > @dropped OR EXISTS (SELECT * FROM #ev WHERE event_name IN (N'login', N'logout'))"
     cSql.Add "    SET @full = 1"
-    '--- 1. info, bigint is DECIMAL as VB6 has no 64-bit Variant
-    cSql.Add "SELECT  @new_file AS file_name, CAST(@new_offset AS DECIMAL(19, 0)) AS file_offset,"
-    cSql.Add "        CAST(ISNULL(@cur_dropped, 0) AS DECIMAL(19, 0)) AS dropped,"
-    cSql.Add "        CAST(IIF(@cur_dropped > @dropped, @cur_dropped - @dropped, 0) + @lost AS INT) AS lost,"
-    cSql.Add "        @full AS is_full, IIF(@cur_dropped IS NULL, 1, 0) AS is_missing, @stale AS is_stale"
-    '--- 2. sessions snapshot, all on full resync otherwise only those with new events or a running request
-    cSql.Add "SELECT  s.session_id AS SPID, s.status AS Status, s.login_name AS Login, s.host_name AS Host,"
-    cSql.Add "        DB_NAME(s.database_id) AS DB, LEFT(s.program_name, 120) AS Program, s.cpu_time AS CPU,"
-    cSql.Add "        CAST(IIF(s.reads + s.writes > 2147483647, 2147483647, s.reads + s.writes) AS INT) AS Dsk,"
-    cSql.Add "        FORMAT(s.last_request_start_time, 'MM/dd HH:mm:ss') AS Last_Batch, s.login_time AS LoginTime"
+    '--- the results go to the session's tables, a second batch started when this one is done
+    '--- returns them. The tables are the session's as ODBC runs this batch in a scope of its own
+    cSql.Add "TRUNCATE TABLE #snap"
+    '--- sessions snapshot, all on full resync otherwise only those with new events or a running request
+    cSql.Add "INSERT  #snap (SPID, Status, Login, Host, DB, Program, CPU, Dsk, Last_Batch, LoginTime)"
+    cSql.Add "SELECT  s.session_id, s.status, s.login_name, s.host_name, DB_NAME(s.database_id), LEFT(s.program_name, 120), s.cpu_time,"
+    cSql.Add "        CAST(IIF(s.reads + s.writes > 2147483647, 2147483647, s.reads + s.writes) AS INT),"
+    cSql.Add "        FORMAT(s.last_request_start_time, 'MM/dd HH:mm:ss'), s.login_time"
     cSql.Add "FROM    sys.dm_exec_sessions s"
     cSql.Add "WHERE   (@full = 1 OR s.session_id IN (SELECT session_id FROM #ev) OR s.session_id IN (SELECT session_id FROM sys.dm_exec_requests))"
     cSql.Add "        AND s.session_id <> @@SPID"
     cSql.Add "        AND (@system = 1 OR (s.is_user_process = 1 AND ISNULL(s.program_name, N'') <> N'" & STR_APP_NAME & "'))"
-    '--- 3. live requests and open transactions
-    cSql.Add "SELECT  r.session_id AS SPID, r.status AS Status, r.command AS Command, NULLIF(r.blocking_session_id, 0) AS Blk,"
-    cSql.Add "        r.wait_type AS Wait, NULLIF(r.open_transaction_count, 0) AS Trans, DB_NAME(r.database_id) AS DB"
+    cSql.Add "TRUNCATE TABLE #live"
+    '--- live requests and open transactions
+    cSql.Add "INSERT  #live (SPID, Status, Command, Blk, Wait, Trans, DB)"
+    cSql.Add "SELECT  r.session_id, r.status, r.command, NULLIF(r.blocking_session_id, 0), r.wait_type, NULLIF(r.open_transaction_count, 0), DB_NAME(r.database_id)"
     cSql.Add "FROM    sys.dm_exec_requests r"
     cSql.Add "WHERE   r.session_id <> @@SPID AND r.session_id IN (SELECT session_id FROM sys.dm_exec_sessions WHERE @system = 1 OR is_user_process = 1)"
     cSql.Add "UNION ALL"
@@ -398,19 +409,61 @@ Private Function pvGetFetchSql() As String
     cSql.Add "FROM    sys.dm_exec_sessions s"
     cSql.Add "WHERE   s.open_transaction_count > 0 AND s.session_id <> @@SPID AND (@system = 1 OR s.is_user_process = 1)"
     cSql.Add "        AND NOT EXISTS (SELECT * FROM sys.dm_exec_requests r WHERE r.session_id = s.session_id)"
-    '--- 4. new events, auto-stats and empty statements are noise, NTEXT as MSDASQL garbles NVARCHAR(MAX)
-    cSql.Add "SELECT  session_id AS SPID, event_name,"
-    cSql.Add "        FORMAT(DATEADD(MINUTE, DATEDIFF(MINUTE, SYSUTCDATETIME(), SYSDATETIME()), ts), 'HH:mm:ss.fff') AS event_time,"
-    cSql.Add "        CAST(sql_text AS NTEXT) AS sql_text, object_name, line_number,"
-    cSql.Add "        CAST(duration / 1000 AS DECIMAL(19, 0)) AS duration_ms, CAST(cpu_time / 1000 AS DECIMAL(19, 0)) AS cpu_ms,"
-    cSql.Add "        CAST(logical_reads AS DECIMAL(19, 0)) AS logical_reads, CAST(writes AS DECIMAL(19, 0)) AS writes,"
-    cSql.Add "        CAST(row_count AS DECIMAL(19, 0)) AS row_count, result, error_number, severity, message"
+    cSql.Add "TRUNCATE TABLE #out"
+    '--- new events, auto-stats and empty statements are noise
+    cSql.Add "INSERT  #out (file_name, file_offset, seq, SPID, event_name, event_time, sql_text, object_name, line_number,"
+    cSql.Add "        duration_ms, cpu_ms, logical_reads, writes, row_count, result, error_number, severity, message)"
+    cSql.Add "SELECT  file_name, file_offset, seq, session_id, event_name,"
+    cSql.Add "        FORMAT(DATEADD(MINUTE, DATEDIFF(MINUTE, SYSUTCDATETIME(), SYSDATETIME()), ts), 'HH:mm:ss.fff'),"
+    cSql.Add "        sql_text, object_name, line_number, duration / 1000, cpu_time / 1000, logical_reads, writes, row_count,"
+    cSql.Add "        result, error_number, severity, message"
     cSql.Add "FROM    #ev"
     cSql.Add "WHERE   event_name NOT IN (N'login', N'logout')"
     cSql.Add "        AND NOT (event_name = N'sp_statement_completed' AND (ISNULL(sql_text, N'') = N'' OR sql_text LIKE N'%[_]MS[_]UPDSTATS[_]TBL%'))"
-    cSql.Add "ORDER BY file_name, file_offset, seq"
+    cSql.Add "TRUNCATE TABLE #info"
+    cSql.Add "INSERT  #info (file_name, file_offset, dropped, lost, is_full, is_missing, is_stale)"
+    cSql.Add "SELECT  @new_file, @new_offset, ISNULL(@cur_dropped, 0), IIF(@cur_dropped > @dropped, @cur_dropped - @dropped, 0) + @lost,"
+    cSql.Add "        @full, IIF(@cur_dropped IS NULL, 1, 0), @stale"
     pvGetFetchSql = ConcatCollection(cSql)
 End Function
+
+'--- the results of the last populate batch: 1. info, 2. sessions snapshot, 3. live requests,
+'--- 4. new events. Bigint is DECIMAL as VB6 has no 64-bit Variant, NTEXT as MSDASQL garbles NVARCHAR(MAX)
+Private Function pvGetResultSql() As String
+    Dim cSql            As Collection
+
+    Set cSql = New Collection
+    cSql.Add "SELECT  file_name, file_offset, dropped, lost, is_full, is_missing, is_stale FROM #info"
+    cSql.Add "SELECT  SPID, Status, Login, Host, DB, Program, CPU, Dsk, Last_Batch, LoginTime FROM #snap"
+    cSql.Add "SELECT  SPID, Status, Command, Blk, Wait, Trans, DB FROM #live"
+    cSql.Add "SELECT  SPID, event_name, event_time, CAST(sql_text AS NTEXT) AS sql_text, object_name, line_number,"
+    cSql.Add "        duration_ms, cpu_ms, logical_reads, writes, row_count, result, error_number, severity, message"
+    cSql.Add "FROM    #out"
+    cSql.Add "ORDER BY file_name, file_offset, seq"
+    pvGetResultSql = ConcatCollection(cSql)
+End Function
+
+'--- the tables the populate batch fills and the result batch reads, in the session's own scope
+'--- so they outlive the batch
+Private Sub pvCreateResultTables()
+    Dim cSql            As Collection
+
+    Set cSql = New Collection
+    cSql.Add "DROP TABLE IF EXISTS #info"
+    cSql.Add "CREATE TABLE #info (file_name NVARCHAR(260), file_offset DECIMAL(19, 0), dropped DECIMAL(19, 0), lost INT,"
+    cSql.Add "    is_full INT, is_missing INT, is_stale INT)"
+    cSql.Add "DROP TABLE IF EXISTS #snap"
+    cSql.Add "CREATE TABLE #snap (SPID INT, Status NVARCHAR(30), Login NVARCHAR(128), Host NVARCHAR(128), DB NVARCHAR(128),"
+    cSql.Add "    Program NVARCHAR(120), CPU INT, Dsk INT, Last_Batch NVARCHAR(20), LoginTime DATETIME)"
+    cSql.Add "DROP TABLE IF EXISTS #live"
+    cSql.Add "CREATE TABLE #live (SPID INT, Status NVARCHAR(30), Command NVARCHAR(32), Blk INT, Wait NVARCHAR(60), Trans INT, DB NVARCHAR(128))"
+    cSql.Add "DROP TABLE IF EXISTS #out"
+    cSql.Add "CREATE TABLE #out (file_name NVARCHAR(260), file_offset BIGINT, seq BIGINT, SPID INT, event_name NVARCHAR(60),"
+    cSql.Add "    event_time NVARCHAR(20), sql_text NVARCHAR(MAX), object_name NVARCHAR(256), line_number INT,"
+    cSql.Add "    duration_ms DECIMAL(19, 0), cpu_ms DECIMAL(19, 0), logical_reads DECIMAL(19, 0), writes DECIMAL(19, 0),"
+    cSql.Add "    row_count DECIMAL(19, 0), result NVARCHAR(20), error_number INT, severity INT, message NVARCHAR(4000))"
+    m_oConn.Execute ConcatCollection(cSql), , adExecuteNoRecords
+End Sub
 
 Private Function pvNotOwnApp() As String
     pvNotOwnApp = "sqlserver.client_app_name <> N'" & STR_APP_NAME & "'"
