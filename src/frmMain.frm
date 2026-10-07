@@ -254,8 +254,7 @@ End Enum
 '=========================================================================
 
 Private Sub PrintError(sFunc As String)
-    Debug.Print MODULE_NAME & "." & sFunc & ": " & Error
-    MsgBox MODULE_NAME & "." & sFunc & "(" & Erl & ") : " & Error, vbCritical
+    PopPrintError PushError, MODULE_NAME, sFunc
 End Sub
 
 '=========================================================================
@@ -1361,21 +1360,26 @@ End Sub
 '=========================================================================
 
 Private Sub Form_Resize()
+    Const FUNC_NAME     As String = "Form_Resize"
     Dim dblLeft          As Double
 
-    On Error Resume Next
+    On Error GoTo EH
     If WindowState <> vbMinimized Then
         tvwServers.Move 0, 0, m_dblTreeWidth, ScaleHeight
         dblLeft = tvwServers.Left + tvwServers.Width
         picTreeSplitter.Move dblLeft, 0, 60, ScaleHeight
         dblLeft = picTreeSplitter.Left + picTreeSplitter.Width
-        '--- the list and history split what is right of the tree
-        lvwMain.Move dblLeft, 0, (ScaleWidth - dblLeft) * m_dblRatio, ScaleHeight
+        '--- the list and history split what is right of the tree (none if the window is too narrow)
+        lvwMain.Move dblLeft, 0, Limit((ScaleWidth - dblLeft) * m_dblRatio, 0), ScaleHeight
         dblLeft = lvwMain.Left + lvwMain.Width
         picSplitter.Move dblLeft, 0, 60, ScaleHeight
         dblLeft = picSplitter.Left + picSplitter.Width
-        txtInput.Move dblLeft, 0, ScaleWidth - dblLeft, ScaleHeight
+        txtInput.Move dblLeft, 0, Limit(ScaleWidth - dblLeft, 0), ScaleHeight
     End If
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub lvwMain_ColumnClick(ByVal Col As Long)
@@ -1515,7 +1519,14 @@ EH:
 End Sub
 
 Private Sub m_oFrmStats_BeforeClose()
+    Const FUNC_NAME     As String = "m_oFrmStats_BeforeClose"
+
+    On Error GoTo EH
     Set m_oFrmStats = Nothing
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub mnuFile_Click(Index As Integer)
@@ -1617,8 +1628,15 @@ EH:
 End Sub
 
 Private Sub picSplitter_MouseDown(Button As Integer, Shift As Integer, X As Single, Y As Single)
+    Const FUNC_NAME     As String = "picSplitter_MouseDown"
+
+    On Error GoTo EH
     m_bDown = True
     m_dblDownX = X
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub picSplitter_MouseMove(Button As Integer, Shift As Integer, X As Single, Y As Single)
@@ -1639,12 +1657,26 @@ EH:
 End Sub
 
 Private Sub picSplitter_MouseUp(Button As Integer, Shift As Integer, X As Single, Y As Single)
+    Const FUNC_NAME     As String = "picSplitter_MouseUp"
+
+    On Error GoTo EH
     m_bDown = False
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub picTreeSplitter_MouseDown(Button As Integer, Shift As Integer, X As Single, Y As Single)
+    Const FUNC_NAME     As String = "picTreeSplitter_MouseDown"
+
+    On Error GoTo EH
     m_bDown = True
     m_dblDownX = X
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub picTreeSplitter_MouseMove(Button As Integer, Shift As Integer, X As Single, Y As Single)
@@ -1665,7 +1697,14 @@ EH:
 End Sub
 
 Private Sub picTreeSplitter_MouseUp(Button As Integer, Shift As Integer, X As Single, Y As Single)
+    Const FUNC_NAME     As String = "picTreeSplitter_MouseUp"
+
+    On Error GoTo EH
     m_bDown = False
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub tmrFetch_Timer()
@@ -1747,7 +1786,7 @@ Private Sub Form_Unload(Cancel As Integer)
     If WindowState <> vbMinimized Then
         Call SaveSetting(STR_APP_NAME, STR_REG_COMMON, "WindowState", WindowState)
     Else
-        On Error Resume Next
+        On Error Resume Next '--- checked
         Call DeleteSetting(STR_APP_NAME, STR_REG_COMMON, "WindowState")
         On Error GoTo EH
     End If
@@ -1836,10 +1875,17 @@ EH:
 End Sub
 
 Private Sub txtInput_KeyPress(KeyAscii As Integer)
+    Const FUNC_NAME     As String = "txtInput_KeyPress"
+
+    On Error GoTo EH
     '--- prevent beep
     If KeyAscii < 32 And KeyAscii <> 8 And KeyAscii <> 9 Then '-- 8 = backspace, 9 = tab
         KeyAscii = 0
     End If
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 '=========================================================================
@@ -1847,5 +1893,12 @@ End Sub
 '=========================================================================
 
 Private Sub Form_Initialize()
+    Const FUNC_NAME     As String = "Form_Initialize"
+
+    On Error GoTo EH
     InitCommonControlsVB
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub

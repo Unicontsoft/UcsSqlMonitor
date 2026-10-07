@@ -55,7 +55,7 @@ Private m_dblLastFull               As Double
 '=========================================================================
 
 Private Sub PrintError(sFunc As String)
-    Debug.Print MODULE_NAME & "." & sFunc & ": " & Error
+    PopPrintError PushError, MODULE_NAME, sFunc
 End Sub
 
 '=========================================================================

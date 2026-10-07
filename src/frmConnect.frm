@@ -190,7 +190,7 @@ Private m_sConnectString    As String
 '=========================================================================
 
 Private Sub PrintError(sFunc As String)
-    Debug.Print MODULE_NAME & "." & sFunc & ": " & Error
+    PopPrintError PushError, MODULE_NAME, sFunc
     MsgBox MODULE_NAME & "." & sFunc & "(" & Erl & ") : " & Error, vbCritical
 End Sub
 
@@ -242,7 +242,6 @@ Private Property Get pvProfile(sServer As String) As String
 End Property
 
 Private Property Let pvProfile(sServer As String, sProfile As String)
-    On Error Resume Next
     If LenB(sServer) <> 0 Then
         If SearchCollection(m_cProfiles, sServer) Then
             m_cProfiles.Remove sServer
@@ -254,7 +253,6 @@ End Property
 Private Property Let pvDisabled(ByVal bValue As Boolean)
     Dim oCtl            As Object
 
-    On Error Resume Next
     For Each oCtl In Controls
         Select Case LCase(TypeName(oCtl))
         Case "textbox"
@@ -530,14 +528,28 @@ EH:
 End Sub
 
 Private Sub Command1_Click()
+    Const FUNC_NAME     As String = "Command1_Click"
+
+    On Error GoTo EH
     pvDisabled = True
     If pvOpen() Then
         m_bOk = True
         Visible = False
     End If
     pvDisabled = False
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub Command2_Click()
+    Const FUNC_NAME     As String = "Command2_Click"
+
+    On Error GoTo EH
     Visible = False
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub

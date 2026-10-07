@@ -268,10 +268,12 @@ Public Function SubclassProc( _
             ByVal lWParam As Long, _
             ByVal lParam As Long, _
             Handled As Boolean) As Long
+    Const FUNC_NAME     As String = "SubclassProc"
     #If lWParam Then '--- touch args
     #End If
     Dim lRetVal         As Long
 
+    On Error GoTo EH
     Select Case lMsg
     Case WM_NOTIFY
         If pvCustomDraw(lParam, lRetVal) Then
@@ -292,9 +294,16 @@ Public Function SubclassProc( _
     Case WM_LBUTTONDOWN, WM_RBUTTONDOWN
         pvRaiseMouseDown lMsg, lParam
     End Select
+    Exit Function
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Function
 
 Friend Function frTranslateAccel(uMsg As APIMSG) As Boolean
+    Const FUNC_NAME     As String = "frTranslateAccel"
+
+    On Error GoTo EH
     Select Case uMsg.lMessage
     Case WM_KEYDOWN
         RaiseEvent PreviewKeyDown(uMsg.wParam, uMsg.lParam, frTranslateAccel)
@@ -309,6 +318,10 @@ Friend Function frTranslateAccel(uMsg As APIMSG) As Boolean
             frTranslateAccel = True
         End Select
     End Select
+    Exit Function
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Function
 
 '= private ===============================================================
@@ -463,28 +476,63 @@ End Sub
 '=========================================================================
 
 Private Sub UserControl_InitProperties()
+    Const FUNC_NAME     As String = "UserControl_InitProperties"
+
+    On Error GoTo EH
     Set UserControl.Font = Ambient.Font
     pvInit
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub UserControl_ReadProperties(PropBag As PropertyBag)
+    Const FUNC_NAME     As String = "UserControl_ReadProperties"
+
+    On Error GoTo EH
     Set UserControl.Font = PropBag.ReadProperty("Font", Ambient.Font)
     pvInit
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub UserControl_WriteProperties(PropBag As PropertyBag)
+    Const FUNC_NAME     As String = "UserControl_WriteProperties"
+
+    On Error GoTo EH
     Call PropBag.WriteProperty("Font", UserControl.Font, Ambient.Font)
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub UserControl_Resize()
+    Const FUNC_NAME     As String = "UserControl_Resize"
+
+    On Error GoTo EH
     If m_hTree <> 0 Then
         Call MoveWindow(m_hTree, 0, 0, ScaleWidth, ScaleHeight, 1)
     End If
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub UserControl_EnterFocus()
+    Const FUNC_NAME     As String = "UserControl_EnterFocus"
+
+    On Error GoTo EH
     Call SetFocusAPI(m_hTree)
     SetIPAO m_uIPAO, UserControl.hWnd
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 '=========================================================================
@@ -492,6 +540,9 @@ End Sub
 '=========================================================================
 
 Private Sub UserControl_Terminate()
+    Const FUNC_NAME     As String = "UserControl_Terminate"
+
+    On Error GoTo EH
     Set m_pTreeHook = Nothing
     Set m_pHostHook = Nothing
     TerminateIPAO m_uIPAO
@@ -499,4 +550,8 @@ Private Sub UserControl_Terminate()
         Call DestroyWindow(m_hTree)
         m_hTree = 0
     End If
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub

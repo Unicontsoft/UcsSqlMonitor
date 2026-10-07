@@ -455,12 +455,14 @@ Public Function SubclassProc( _
             ByVal lWParam As Long, _
             ByVal lParam As Long, _
             Handled As Boolean) As Long
+    Const FUNC_NAME     As String = "SubclassProc"
     #If lWParam Then '--- touch args
     #End If
     Const NF_QUERY      As Long = 3
     Const NFR_UNICODE   As Long = 2
     Dim lRetVal         As Long
 
+    On Error GoTo EH
     Select Case lMsg
     Case WM_NOTIFYFORMAT
         '--- VB6 host is an ANSI window, so claim Unicode for the list's notifications
@@ -490,9 +492,16 @@ Public Function SubclassProc( _
             RaiseEvent Scrolled
         End If
     End Select
+    Exit Function
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Function
 
 Friend Function frTranslateAccel(uMsg As APIMSG) As Boolean
+    Const FUNC_NAME     As String = "frTranslateAccel"
+
+    On Error GoTo EH
     Select Case uMsg.lMessage
     Case WM_KEYDOWN
         RaiseEvent PreviewKeyDown(uMsg.wParam, uMsg.lParam, frTranslateAccel)
@@ -507,6 +516,10 @@ Friend Function frTranslateAccel(uMsg As APIMSG) As Boolean
             frTranslateAccel = True
         End Select
     End Select
+    Exit Function
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Function
 
 '= private ===============================================================
@@ -795,37 +808,72 @@ End Sub
 '=========================================================================
 
 Private Sub UserControl_InitProperties()
+    Const FUNC_NAME     As String = "UserControl_InitProperties"
+
+    On Error GoTo EH
     Set UserControl.Font = Ambient.Font
     m_bMultiSelect = DEF_MULTISELECT
     m_bOwnerData = DEF_OWNERDATA
     m_bSortHeaders = DEF_SORTHEADERS
     pvInit
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub UserControl_ReadProperties(PropBag As PropertyBag)
+    Const FUNC_NAME     As String = "UserControl_ReadProperties"
+
+    On Error GoTo EH
     Set UserControl.Font = PropBag.ReadProperty("Font", Ambient.Font)
     m_bMultiSelect = PropBag.ReadProperty("MultiSelect", DEF_MULTISELECT)
     m_bOwnerData = PropBag.ReadProperty("OwnerData", DEF_OWNERDATA)
     m_bSortHeaders = PropBag.ReadProperty("SortHeaders", DEF_SORTHEADERS)
     pvInit
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub UserControl_WriteProperties(PropBag As PropertyBag)
+    Const FUNC_NAME     As String = "UserControl_WriteProperties"
+
+    On Error GoTo EH
     Call PropBag.WriteProperty("Font", UserControl.Font, Ambient.Font)
     Call PropBag.WriteProperty("MultiSelect", m_bMultiSelect, DEF_MULTISELECT)
     Call PropBag.WriteProperty("OwnerData", m_bOwnerData, DEF_OWNERDATA)
     Call PropBag.WriteProperty("SortHeaders", m_bSortHeaders, DEF_SORTHEADERS)
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub UserControl_Resize()
+    Const FUNC_NAME     As String = "UserControl_Resize"
+
+    On Error GoTo EH
     If m_hList <> 0 Then
         Call MoveWindow(m_hList, 0, 0, ScaleWidth, ScaleHeight, 1)
     End If
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub UserControl_EnterFocus()
+    Const FUNC_NAME     As String = "UserControl_EnterFocus"
+
+    On Error GoTo EH
     Call SetFocusAPI(m_hList)
     SetIPAO m_uIPAO, UserControl.hWnd
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 '=========================================================================
@@ -833,6 +881,9 @@ End Sub
 '=========================================================================
 
 Private Sub UserControl_Terminate()
+    Const FUNC_NAME     As String = "UserControl_Terminate"
+
+    On Error GoTo EH
     Set m_pListHook = Nothing
     Set m_pHostHook = Nothing
     TerminateIPAO m_uIPAO
@@ -844,4 +895,8 @@ Private Sub UserControl_Terminate()
         Call DestroyWindow(m_hList)
         m_hList = 0
     End If
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub

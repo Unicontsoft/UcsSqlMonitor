@@ -211,7 +211,7 @@ Public Const STR_CLASS_TREEVIEW             As String = "SysTreeView32"
 '--- for SetWindowTheme
 Public Const STR_THEME_EXPLORER             As String = "Explorer"
 
-Public Declare Function InitCommonControlsEx Lib "comctl32" (iccex As tagInitCommonControlsEx) As Boolean
+Public Declare Function InitCommonControlsEx Lib "comctl32" (iccex As tagInitCommonControlsEx) As Long
 Public Declare Function LoadLibrary Lib "kernel32" Alias "LoadLibraryW" (ByVal lpLibFileName As LongPtr) As LongPtr
 Public Declare Function GetAsyncKeyState Lib "user32" (ByVal vKey As Long) As Integer
 Public Declare Function VariantChangeType Lib "oleaut32" (Dest As Variant, Src As Variant, ByVal wFlags As Integer, ByVal vt As VbVarType) As Long
@@ -468,7 +468,7 @@ Private m_dblTraceBase              As Double
 '=========================================================================
 
 Private Sub PrintError(sFunc As String)
-    Debug.Print MODULE_NAME & "." & sFunc & ": " & Error
+    PopPrintError PushError, MODULE_NAME, sFunc
 End Sub
 
 Public Function PushError(Optional vErr As Variant) As Variant
@@ -642,18 +642,35 @@ EH:
     Resume Next
 End Function
 
+Public Function Clamp( _
+            ByVal Value As Long, _
+            Optional ByVal Min As Long = &H80000000, _
+            Optional ByVal Max As Long = &H7FFFFFFF) As Long
+    Const FUNC_NAME     As String = "Clamp"
+
+    On Error GoTo EH
+    If Value < Min Then
+        Clamp = Min
+    ElseIf Value > Max Then
+        Clamp = Max
+    Else
+        Clamp = Value
+    End If
+    Exit Function
+EH:
+    PrintError FUNC_NAME
+    Resume Next
+End Function
+
 Public Function InitCommonControlsVB() As Boolean
-   Dim iccex            As tagInitCommonControlsEx
-   
-   On Error Resume Next
-   Call LoadLibrary(StrPtr("shell32.dll"))
-   With iccex
-       .lngSize = LenB(iccex)
-       .lngICC = ICC_LISTVIEW_CLASSES Or ICC_TREEVIEW_CLASSES Or ICC_USEREX_CLASSES
-   End With
-   Call InitCommonControlsEx(iccex)
-   InitCommonControlsVB = (Err.Number = 0)
-   On Error GoTo 0
+    Dim iccex           As tagInitCommonControlsEx
+
+    Call LoadLibrary(StrPtr("shell32.dll"))
+    With iccex
+        .lngSize = LenB(iccex)
+        .lngICC = ICC_LISTVIEW_CLASSES Or ICC_TREEVIEW_CLASSES Or ICC_USEREX_CLASSES
+    End With
+    InitCommonControlsVB = (InitCommonControlsEx(iccex) <> 0)
 End Function
 
 '--- the header and the rows as tab-separated text, all rows or only the selected ones
@@ -732,7 +749,7 @@ End Function
 Public Function SetAbsolutePosition( _
             rs As Recordset, _
             ByVal lPosition As Long) As Boolean
-    On Error Resume Next
+    On Error Resume Next '--- checked
     rs.AbsolutePosition = lPosition
     SetAbsolutePosition = (Err.Number = 0) And Not rs.EOF And Not rs.BOF
     On Error GoTo 0

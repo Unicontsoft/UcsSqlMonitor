@@ -64,7 +64,7 @@ Private m_bPopulating               As Boolean
 '=========================================================================
 
 Private Sub PrintError(sFunc As String)
-    Debug.Print MODULE_NAME & "." & sFunc & "(" & m_sServer & "): " & Error
+    PopPrintError PushError, MODULE_NAME, sFunc & "(" & m_sServer & ")"
 End Sub
 
 '=========================================================================
@@ -229,7 +229,7 @@ Private Sub pvFetch()
         Set m_rsResult = New Recordset
         m_rsResult.CursorLocation = adUseClient
     End If
-    On Error Resume Next
+    On Error Resume Next '--- checked
     lState = m_rsResult.State
     If Err.Number <> 0 Then
         pvTestConn
@@ -249,7 +249,7 @@ Private Sub pvFetch()
         '--- Extended Events fill the session's tables first, ExecuteComplete then fetches them
         Set m_oPopulateCmd = m_oExtEvents.FetchCommand(m_bSystemProcesses)
         m_bPopulating = True
-        On Error Resume Next
+        On Error Resume Next '--- checked
         m_oPopulateCmd.Execute , , adAsyncExecute Or adExecuteNoRecords
         If Err.Number <> 0 Then
             m_bPopulating = False
@@ -259,7 +259,7 @@ Private Sub pvFetch()
         Exit Sub
     End If
     Set oCmd = m_oCmd
-    On Error Resume Next
+    On Error Resume Next '--- checked
     m_rsResult.Open oCmd, , adOpenStatic, adLockBatchOptimistic, adAsyncExecute Or adAsyncFetch
     If Err.Number <> 0 Then
         pvTestConn

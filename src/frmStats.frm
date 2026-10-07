@@ -66,7 +66,7 @@ End Type
 '=========================================================================
 
 Private Sub PrintError(sFunc As String)
-    Debug.Print MODULE_NAME & "." & sFunc & ": " & Error
+    PopPrintError PushError, MODULE_NAME, sFunc
 End Sub
 
 '=========================================================================
@@ -171,12 +171,27 @@ End Sub
 '=========================================================================
 
 Private Sub Form_QueryUnload(Cancel As Integer, UnloadMode As Integer)
+    Const FUNC_NAME     As String = "Form_QueryUnload"
+
+    On Error GoTo EH
     RaiseEvent BeforeClose
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub Form_Resize()
-    On Error Resume Next
-    lvwStats.Move 0, 0, ScaleWidth, ScaleHeight
+    Const FUNC_NAME     As String = "Form_Resize"
+
+    On Error GoTo EH
+    If WindowState <> vbMinimized Then
+        lvwStats.Move 0, 0, ScaleWidth, ScaleHeight
+    End If
+    Exit Sub
+EH:
+    PrintError FUNC_NAME
+    Resume Next
 End Sub
 
 Private Sub lvwStats_ColumnClick(ByVal Col As Long)
